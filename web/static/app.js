@@ -1,304 +1,261 @@
-// Панель владельца ChapaShop. Все данные выводятся через esc() — защита от XSS.
+// ChapaShop — интерфейс сайта. Весь текст выводится через textContent — защита от XSS.
 (() => {
-  const $ = (s) => document.querySelector(s);
-  const view = $("#view");
-  let csrf = "";
-  const STATUS = {awaiting_payment:"Ожидает оплаты",paid:"Оплачен",processing:"В обработке",awaiting_delivery:"Ожидает выдачи",delivered:"Выдан",rejected:"Отклонён",refunded:"Возврат оформлен"};
-  const NEXT = {awaiting_payment:["paid", "rejected"],paid:["processing","awaiting_delivery","delivered","rejected"],processing:["awaiting_delivery","delivered","rejected"],awaiting_delivery:["processing","delivered","rejected"]};
-  const ACTIONS = {login:"Вход",login_failed:"Неудачный вход",logout:"Выход",password_changed:"Смена пароля",order_status:"Статус заказа",order_server_link:"Ссылка на сервер",order_refund:"Возврат",product_create:"Новый товар",product_update:"Изменение товара",product_delete:"Удаление товара",settings_update:"Настройки",order_deliver:"Начата выдача",order_receipt_sent:"Отправлен чек",backup_create:"Резервная копия",backup_restore:"Восстановление из копии",promo_create:"Создан промокод"};
-  const SETTING_RU = {shop_name:"Название магазина",shop_description:"Описание",primary_color:"Основной цвет",maintenance_mode:"Режим обслуживания (0/1)",contact_info:"Контакты",order_rules:"Правила заказа",bot_username:"Username бота (без @)"};
+const CART_KEY = "chapashop_cart_v1";
+const state = { category: null, q: "", sort: "new", onlyAvail: false, cats: [], shop: {}, promo: "" };
+const $ = (s) => document.querySelector(s);
+const view = $("#view");
 
-  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-  const dt = (s) => new Date(s).toLocaleString("ru-RU", {dateStyle:"short", timeStyle:"short"});
-  const badge = (s) => `<span class="badge ${esc(s)}">${esc(STATUS[s] || s)}</span>`;
-  const toast = (t) => { const el = $("#toast"); el.textContent = t; el.classList.add("on"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("on"), 2600); };
-
-  async function api(path, opts = {}) {
-    const r = await fetch("/admin/api" + path, {
-      method: opts.method || "GET", credentials: "same-origin",
-      headers: {"Content-Type": "application/json", "X-CSRF-Token": csrf},
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-    });
-    if (r.status === 401 && path !== "/login") { showLogin(); throw new Error("Нужен вход"); }
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      let msg = data.detail;
-      if (Array.isArray(msg)) msg = msg.map((d) => (d.msg || "").replace("Value error, ", "")).join("; ");
-      throw new Error(msg || "Ошибка " + r.status);
-    }
-    return data;
+function h(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "text") e.textContent = v;
+    else e.setAttribute(k, v === true ? "" : v);
   }
-  const run = (fn) => fn().catch((e) => toast(e.message));
+  for (const c of kids.flat()) if (c != null) e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return e;
+}
+const TG = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData ? window.Telegram.WebApp : null;
+async function api(path, opts = {}) {
+  const headers = Object.assign({}, opts.headers || {});
+  if (TG) headers["X-Telegram-Init-Data"] = TG.initData;
+  if (opts.body) headers["Content-Type"] = "application/json";
+  const r = await fetch(path, Object.assign({}, opts, { headers }));
+  if (!r.ok) { let d = ""; try { d = (await r.json()).detail; } catch {} const e = new Error(typeof d === "string" && d ? d : String(r.status)); e.status = r.status; throw e; }
+  return r.json();
+}
+const fmtDate = (s) => new Date(s).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+const PAY_RU = { pending: "Ожидает оплаты", paid: "Оплачен", refunded: "Возврат", failed: "Ошибка оплаты" };
+const stars = (n) => `${n} ⭐`;
+function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 1800); }
 
-  function showLogin() { $("#app").classList.add("hidden"); $("#login").classList.remove("hidden"); }
-  function showApp() { $("#login").classList.add("hidden"); $("#app").classList.remove("hidden"); route(); }
+const cart = {
+  read() { try { const v = JSON.parse(localStorage.getItem(CART_KEY) || "[]"); return Array.isArray(v) ? v.filter((x) => Number.isInteger(x.product_id) && Number.isInteger(x.quantity) && x.quantity > 0) : []; } catch { return []; } },
+  write(items) { localStorage.setItem(CART_KEY, JSON.stringify(items)); updateBadge(); },
+  qty(id) { return (this.read().find((x) => x.product_id === id) || {}).quantity || 0; },
+  set(id, q) { const items = this.read().filter((x) => x.product_id !== id); if (q > 0) items.push({ product_id: id, quantity: Math.min(99, q) }); this.write(items); },
+  add(id, q = 1) { this.set(id, this.qty(id) + q); },
+  count() { return this.read().reduce((s, x) => s + x.quantity, 0); },
+};
+function updateBadge() {
+  const n = cart.count();
+  for (const b of [$("#cart-badge"), $("#cart-badge2")]) { b.hidden = !n; b.textContent = n > 99 ? "99+" : n; }
+}
 
-  $("#loginForm").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const f = new FormData(e.target);
-    $("#loginErr").textContent = "";
-    api("/login", {method:"POST", body:{username:f.get("username"), password:f.get("password")}})
-      .then((d) => { csrf = d.csrf; e.target.reset(); showApp(); })
-      .catch((err) => { $("#loginErr").textContent = err.message; });
+function productImage(p, cls = "img") {
+  const box = h("div", { class: cls });
+  if (p.image_url) box.append(h("img", { src: p.image_url, alt: p.name, loading: "lazy" }));
+  else box.textContent = "★";
+  return box;
+}
+function catName(id) { return (state.cats.find((c) => c.id === id) || {}).name || "Без категории"; }
+
+function card(p) {
+  const img = productImage(p);
+  if (p.is_demo) img.append(h("span", { class: "pill", text: "Демо" }));
+  if (!p.is_available) img.append(h("span", { class: "pill off", text: "Нет в наличии" }));
+  const priceBlock = h("div", { class: "price" });
+  if (p.old_price_stars && p.old_price_stars > p.price_stars) {
+    priceBlock.append(h("span", { style: "text-decoration: line-through; color: #999; font-size: 14px; margin-right: 6px;" }, `${p.old_price_stars} ⭐`));
+  }
+  priceBlock.append(`${p.price_stars} ⭐`);
+  const btn = h("button", { class: "btn btn-primary", disabled: !p.is_available, onclick: (e) => {
+    e.preventDefault(); e.stopPropagation(); cart.add(p.id); toast("Добавлено в корзину");
+  } }, p.is_available ? (p.price_stars === 0 ? "Забрать" : "В корзину") : "Нет в наличии");
+  return h("a", { class: "card", href: `/product/${p.id}`, "data-link": true }, img,
+    h("div", { class: "body" }, priceBlock, h("div", { class: "name", text: p.name }), h("div", { class: "tag", text: catName(p.category_id) }), btn));
+}
+
+async function pageHome() {
+  document.title = "ChapaShop";
+  const grid = h("section", { class: "grid", id: "grid" }, ...Array.from({ length: 6 }, () => h("div", { class: "skel" })));
+  const count = h("div", { class: "count" });
+  const sort = h("select", { onchange: (e) => { state.sort = e.target.value; loadProducts(); } },
+    ...[["new", "Сначала новые"], ["price_asc", "Дешевле"], ["price_desc", "Дороже"], ["name", "По названию"]]
+      .map(([v, t]) => h("option", { value: v, selected: state.sort === v }, t)));
+  const avail = h("input", { type: "checkbox", checked: state.onlyAvail, onchange: (e) => { state.onlyAvail = e.target.checked; loadProducts(); } });
+  const cats = h("nav", { class: "cats" });
+  const notice = state.shop.payments_enabled ? null : h("div", { class: "notice", text: "Тестовый режим: оплата пока не подключена, все товары — демо." });
+  view.replaceChildren(
+    h("section", { class: "hero" }, h("h1", { text: state.shop.shop_name || "ChapaShop" }), h("p", { text: state.shop.shop_description || "" })),
+    notice || "", cats,
+    h("div", { class: "toolbar" }, count, h("div", { class: "ctrls" }, h("label", { class: "chk" }, avail, "В наличии"), sort)),
+    grid);
+
+  function renderCats() {
+    const mk = (label, slug) => h("button", { class: "cat" + (state.category === slug ? " on" : ""), onclick: () => { state.category = slug; renderCats(); loadProducts(); } }, label);
+    cats.replaceChildren(mk("Все", null), ...state.cats.map((c) => mk(c.name, c.slug)));
+  }
+  async function loadProducts() {
+    const p = new URLSearchParams({ sort: state.sort });
+    if (state.q) p.set("q", state.q);
+    if (state.category) p.set("category", state.category);
+    if (state.onlyAvail) p.set("available", "true");
+    try {
+      const items = await api("/api/products?" + p);
+      count.textContent = `Товаров: ${items.length}`;
+      if (!items.length) return grid.replaceChildren(h("div", { class: "empty" }, "Ничего не найдено"));
+      grid.replaceChildren(...items.map(card));
+    } catch (e) { grid.replaceChildren(h("div", { class: "empty", text: "Ошибка загрузки: " + e.message })); }
+  }
+  pageHome.reload = loadProducts;
+  renderCats(); loadProducts();
+}
+
+async function pageProduct(id) {
+  view.replaceChildren(h("div", { class: "skel" }));
+  let p;
+  try { p = await api(`/api/products/${id}`); } catch { return view.replaceChildren(h("div", { class: "empty", text: "Товар не найден" })); }
+  document.title = `${p.name} — ChapaShop`;
+  let q = Math.max(1, cart.qty(p.id) || 1);
+  const qn = h("span", { text: q });
+  view.replaceChildren(
+    h("div", { class: "crumbs" }, h("a", { href: "/", "data-link": true }, "Каталог"), " / ", catName(p.category_id)),
+    h("section", { class: "pp" }, productImage(p),
+      h("div", {}, h("h1", { text: p.name }), h("div", { class: "price" }, stars(p.price_stars)),
+        h("span", { class: "status " + (p.is_available ? "ok" : "no"), text: p.is_available ? "В наличии" : "Нет в наличии" }),
+        h("p", { class: "desc", text: p.description }),
+        p.is_available ? h("div", { class: "buy-row" }, h("div", { class: "qty" }, h("button", { onclick: () => { q = Math.max(1, q - 1); qn.textContent = q; } }, "−"), qn, h("button", { onclick: () => { q = Math.min(99, q + 1); qn.textContent = q; } }, "+")),
+          h("button", { class: "btn btn-primary", onclick: () => { cart.set(p.id, q); toast(`В корзине: ${q} шт.`); } }, "В корзину")) : "")));
+}
+
+async function pageCart() {
+  document.title = "Корзина";
+  const items = cart.read();
+  if (!items.length) return view.replaceChildren(h("h2", { class: "title", text: "Корзина" }), h("div", { class: "empty" }, "Корзина пуста"));
+  let quote;
+  try { quote = await api("/api/cart/quote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items, promo_code: state.promo }) }); } 
+  catch { return view.replaceChildren(h("div", { class: "empty", text: "Не удалось пересчитать корзину" })); }
+  if (quote.removed.length) { cart.write(items.filter((x) => !quote.removed.includes(x.product_id))); toast("Некоторые товары больше недоступны"); }
+
+  const lines = quote.items.map((l) => {
+    const step = (d) => { cart.set(l.product_id, l.quantity + d); pageCart(); };
+    return h("div", { class: "line" + (l.available ? "" : " off") },
+      h("div", { class: "img" }, "★"),
+      h("div", {}, h("a", { class: "nm", href: `/product/${l.product_id}`, "data-link": true, text: l.name }),
+        h("div", { class: "tag", text: l.available ? `${stars(l.price_stars)} за шт.` : "Нет в наличии" }),
+        h("div", { class: "row" }, h("div", { class: "qty" }, h("button", { onclick: () => step(-1) }, "−"), h("span", { text: l.quantity }), h("button", { onclick: () => step(1) }, "+")), h("b", { text: stars(l.subtotal) })),
+        h("button", { class: "rm", onclick: () => { cart.set(l.product_id, 0); pageCart(); } }, "Удалить")));
   });
-  $("#logout").onclick = () => run(async () => { await api("/logout", {method:"POST"}); csrf = ""; location.hash = ""; showLogin(); });
-  document.querySelectorAll("#tabs a").forEach((a) => a.onclick = () => { location.hash = a.dataset.tab; });
-  window.addEventListener("hashchange", route);
 
-  function route() {
-    const [tab, id] = (location.hash.slice(1) || "dash").split("/");
-    document.querySelectorAll("#tabs a").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
-    const pages = {dash, orders: () => id ? order(id) : orders(), products, customers: () => id ? customer(id) : customers(), settings, audit, backup, ready, promos};
-    run(pages[tab] || dash);
-  }
+  const err = h("div", { class: "err" });
+  const saved = localStorage.getItem("chapashop_roblox") || "";
+  const nick = h("input", { type: "text", maxlength: 20, placeholder: "Ваш Roblox ник", value: saved });
+  const promoInput = h("input", { type: "text", placeholder: "Введите промокод", value: state.promo, style: "text-transform: uppercase;" });
+  const promoBtn = h("button", { class: "btn ghost", style: "margin-top: 8px; padding: 6px 12px;", onclick: () => { state.promo = promoInput.value.trim().toUpperCase(); pageCart(); }}, "Применить");
 
-  async function dash() {
-    const s = await api("/stats");
-    view.innerHTML = `<h2>Сводка</h2><div class="grid">
-      <div class="card stat"><b>${s.orders_total}</b>Заказов</div>
-      <div class="card stat"><b>${s.revenue_stars} ⭐</b>Получено</div>
-      <div class="card stat"><b>${s.customers}</b>Покупателей</div>
-      <div class="card stat"><b>${s.products}</b>Товаров</div></div>
-      <h3 style="margin-top:18px">Заказы по статусам</h3><div class="grid">
-      ${Object.keys(STATUS).map((k) => `<a class="card stat" href="#orders" data-st="${k}"><b>${s.by_status[k] || 0}</b>${STATUS[k]}</a>`).join("")}</div>`;
-    view.querySelectorAll("[data-st]").forEach((a) => a.onclick = () => sessionStorage.setItem("st", a.dataset.st));
-  }
+  const checkout = h("button", { class: "btn btn-primary btn-block", onclick: async () => {
+    const v = nick.value.trim();
+    if (!/^[A-Za-z0-9_]{3,20}$/.test(v)) { err.textContent = "3–20 символов: латиница, цифры и _"; return; }
+    err.textContent = ""; localStorage.setItem("chapashop_roblox", v);
+    if (TG) {
+      checkout.setAttribute("aria-disabled", "true");
+      try {
+        const o = await api("/api/orders", { method: "POST", body: JSON.stringify({ roblox_username: v, promo_code: state.promo, items: quote.items.filter((l) => l.available).map((l) => ({ product_id: l.product_id, quantity: l.quantity })) }) });
+        cart.write([]); toast(`Заказ ${o.number} создан`); go(`/orders/${o.id}`);
+      } catch (x) { err.textContent = x.message; checkout.removeAttribute("aria-disabled"); }
+      return;
+    }
+    const bot = state.shop.bot_username;
+    if (!bot) { toast("Telegram-бот ещё не подключён"); return; }
+    window.open(`https://t.me/${encodeURIComponent(bot)}?start=shop`, "_blank", "noopener");
+  } }, TG ? "Оформить заказ" : "Оформить в Telegram");
 
-  async function orders() {
-    const st = sessionStorage.getItem("st") || ""; sessionStorage.removeItem("st");
-    view.innerHTML = `<h2>Заказы</h2><div class="bar">
-      <input id="oq" placeholder="Номер, Telegram ID или Roblox ник">
-      <select id="ost"><option value="">Все статусы</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}" ${k === st ? "selected" : ""}>${v}</option>`).join("")}</select>
-      </div><div id="olist" class="list"></div>`;
-    const load = () => run(async () => {
-      const p = new URLSearchParams({q: $("#oq").value, status: $("#ost").value});
-      const rows = await api("/orders?" + p);
-      $("#olist").innerHTML = rows.length ? rows.map((o) => `<a class="card row" href="#orders/${o.id}">
-        <div><b>№${esc(o.number)}</b> · ${esc(o.roblox_username)}<div class="muted small">${dt(o.created_at)} · TG ${esc(o.telegram_id)}</div></div>
-        <div style="text-align:right"><b>${o.total_stars} ⭐</b><div>${badge(o.status)}</div></div></a>`).join("") : `<p class="muted">Заказов нет</p>`;
-    });
-    let t; $("#oq").oninput = () => { clearTimeout(t); t = setTimeout(load, 300); };
-    $("#ost").onchange = load; load();
-  }
+  view.replaceChildren(h("h2", { class: "title", text: "Корзина" }),
+    h("div", { class: "cart" }, h("div", { class: "lines" }, lines),
+      h("aside", { class: "summary" },
+        h("div", { class: "r" }, h("span", { text: "Товаров" }), h("span", { text: `${quote.count} шт.` })),
+        quote.discount_amount > 0 ? h("div", { class: "r", style: "color: #11a36a;" }, h("span", { text: "Скидка" }), h("span", { text: `-${quote.discount_amount} ⭐` })) : "",
+        h("div", { class: "t" }, h("span", { text: "Итого" }), h("span", { text: stars(quote.total_stars) })),
+        h("div", { class: "field", style: "margin-top: 10px; margin-bottom: 10px;" }, "Промокод", promoInput, promoBtn),
+        h("label", { class: "field" }, "Roblox username", nick, err),
+        checkout)));
+}
 
-  async function order(id) {
-    const o = await api("/orders/" + encodeURIComponent(id));
-    const next = NEXT[o.status] || [];
-    view.innerHTML = `<a class="back" href="#orders">← Все заказы</a>
-      <h2>Заказ №${esc(o.number)} ${badge(o.status)}</h2>
-      <div class="two"><div class="list">
-        <div class="card"><h3>Товары</h3><table><tr><th>Товар</th><th>Цена</th><th>Кол-во</th><th>Сумма</th></tr>
-          ${o.items.map((i) => `<tr><td>${esc(i.name)}</td><td>${i.price_stars}</td><td>${i.quantity}</td><td>${i.subtotal}</td></tr>`).join("")}
-          <tr><th colspan="3">Итого</th><th>${o.total_stars} ⭐</th></tr></table></div>
-        <div class="card"><h3>История статусов</h3><table>
-          ${o.history.map((h) => `<tr><td class="small">${dt(h.at)}</td><td>${esc(h.new_ru)}<div class="muted small">${esc(h.by)}${h.comment ? " · " + esc(h.comment) : ""}</div></td></tr>`).join("")}</table></div>
-        <div class="card"><h3>Платежи</h3>${o.payments.length ? `<table>${o.payments.map((p) => `<tr><td class="small">${dt(p.at)}</td><td>${p.amount} ⭐</td><td>${esc(p.status)}</td></tr><tr><td colspan="3" class="mono">${esc(p.charge_id)}</td></tr>`).join("")}</table>` : `<p class="muted">Оплаты пока нет</p>`}</div>
-      </div><div class="list">
-        <div class="card"><h3>Покупатель</h3>
-          <div>Roblox: <b>${esc(o.roblox_username)}</b></div>
-          <div>Telegram ID: ${esc(o.telegram_id)}</div>
-          ${o.customer ? `<div>${esc(o.customer.first_name || "")} ${o.customer.username ? "@" + esc(o.customer.username) : ""}</div><a class="back" href="#customers/${o.customer.id}">Профиль покупателя →</a>` : ""}
-          <div class="muted small">Создан ${dt(o.created_at)} · оплата: ${esc(o.payment_status)}</div></div>
-        <div class="card"><h3>Сменить статус</h3>
-          ${next.length ? `<select id="nst">${next.map((s) => `<option value="${s}">${STATUS[s]}</option>`).join("")}</select>
-          <label>Комментарий (для отклонения — причина)</label><textarea id="ncm" maxlength="500"></textarea>
-          <label class="check"><input type="checkbox" id="nnt" checked> Уведомить покупателя в Telegram</label>
-          <button class="btn" id="nsave">Сохранить статус</button>` : `<p class="muted">Статус окончательный</p>`}</div>
-        <div class="card"><h3>Ссылка на приватный сервер</h3>
-          <input id="lnk" placeholder="https://www.roblox.com/share?..." value="${esc(o.server_link || "")}" maxlength="512">
-          <label class="check"><input type="checkbox" id="lnt" checked> Отправить ссылку покупателю</label>
-          <button class="btn" id="lsave">Сохранить ссылку</button></div>
-        ${["paid","processing","awaiting_delivery"].includes(o.status) ? `<div class="card"><h3>Начать выдачу</h3><p class="muted small">Сохранит ссылку, поставит «Ожидает выдачи» и отправит ссылку покупателю.</p>
-          <input id="dl" placeholder="https://www.roblox.com/share?..." value="${esc(o.server_link || "")}" maxlength="512">
-          <div class="actions"><button class="btn" id="dgo">Отправить ссылку и начать выдачу</button></div></div>` : ""}
-        ${["paid","refunded"].includes(o.payment_status) ? `<div class="card"><h3>Чек</h3><div class="actions">
-          <a class="btn ghost" href="/admin/api/orders/${o.id}/receipt.pdf" target="_blank" rel="noopener">Открыть PDF</a>
-          <button class="btn" id="rcp">Отправить покупателю</button></div></div>` : ""}
-        ${o.payment_status === "paid" ? `<div class="card"><h3>Возврат</h3><p class="muted small">Stars вернутся покупателю через Telegram.</p><button class="btn danger" id="rf">Оформить возврат</button></div>` : ""}
-      </div></div>`;
-    const reload = () => order(id);
-    if (next.length) $("#nsave").onclick = () => run(async () => {
-      const r = await api(`/orders/${o.id}/status`, {method:"POST", body:{status:$("#nst").value, comment:$("#ncm").value || null, notify:$("#nnt").checked}});
-      toast(r.notified ? "Статус сохранён, покупатель уведомлён" : "Статус сохранён"); reload();
-    });
-    $("#lsave").onclick = () => run(async () => {
-      const r = await api(`/orders/${o.id}/server-link`, {method:"POST", body:{server_link:$("#lnk").value, notify:$("#lnt").checked}});
-      toast(r.notified ? "Ссылка отправлена покупателю" : "Ссылка сохранена"); reload();
-    });
-    if ($("#dgo")) $("#dgo").onclick = () => run(async () => {
-      const r = await api(`/orders/${o.id}/deliver`, {method:"POST", body:{server_link:$("#dl").value}});
-      toast(r.notified ? "Ссылка отправлена, заказ ожидает выдачи" : "Сохранено (сообщение не отправлено)"); reload();
-    });
-    if ($("#rcp")) $("#rcp").onclick = () => run(async () => {
-      const r = await api(`/orders/${o.id}/send-receipt`, {method:"POST"}); toast(r.notified ? "Чек отправлен" : "Чек не отправлен (бот не подключён)");
-    });
-    if ($("#rf")) $("#rf").onclick = () => confirm(`Вернуть ${o.total_stars} ⭐ покупателю?`) && run(async () => { await api(`/orders/${o.id}/refund`, {method:"POST"}); toast("Возврат оформлен"); reload(); });
-  }
+function pageAbout() {
+  document.title = "О магазине";
+  const s = state.shop;
+  view.replaceChildren(h("section", { class: "about" },
+    h("h2", { text: s.shop_name || "ChapaShop" }), h("p", { text: s.shop_description || "" }),
+    h("h3", { text: "Как проходит заказ" }), h("p", { text: "Выберите товары, укажите Roblox username и оплатите в Telegram Stars." }),
+    h("h3", { text: "Контакты" }), h("p", { text: "Поддержка: @ChapikSupport" })));
+}
 
-  async function products() {
-    const {products: list, categories: cats} = await api("/products");
-    const catName = Object.fromEntries(cats.map((c) => [c.id, c.name]));
-    view.innerHTML = `<h2>Товары</h2><div class="bar"><input id="pq" placeholder="Поиск товара"><button class="btn" id="padd">+ Добавить</button></div>
-      <div id="pform"></div><div id="plist" class="list"></div>`;
-    const draw = () => {
-      const q = $("#pq").value.toLowerCase();
-      $("#plist").innerHTML = list.filter((p) => p.name.toLowerCase().includes(q)).map((p) => `<div class="card row" data-id="${p.id}">
-        <div><b>${esc(p.name)}</b>${p.is_demo ? ' <span class="badge">Демо</span>' : ""}${p.is_hidden ? ' <span class="badge rejected">Скрыт</span>' : ""}${!p.is_available ? ' <span class="badge awaiting_payment">Нет в наличии</span>' : ""}
-          <div class="muted small">${esc(catName[p.category_id] || "Без категории")}</div></div>
-        <div style="text-align:right">
-          ${p.old_price_stars ? `<div class="muted small" style="text-decoration:line-through;">${p.old_price_stars} ⭐</div>` : ''}
-          <b style="color: ${p.price_stars === 0 ? '#11a36a' : 'inherit'}">${p.price_stars === 0 ? 'Бесплатно' : p.price_stars + ' ⭐'}</b>
-        </div>
-      </div>`).join("") || `<p class="muted">Нет товаров</p>`;
-      $("#plist").querySelectorAll("[data-id]").forEach((el) => el.onclick = () => form(list.find((p) => p.id == el.dataset.id)));
-    };
-    const form = (p) => {
-      p = p || {name:"", description:"", image_url:"", category_id:cats[0]?.id ?? null, price_stars:100, old_price_stars:null, is_available:true, is_hidden:false, is_demo:false};
-      $("#pform").innerHTML = `<div class="card" style="margin-bottom:12px"><h3>${p.id ? "Редактирование" : "Новый товар"}</h3>
-        <label>Название</label><input id="fn" maxlength="128" value="${esc(p.name)}">
-        <label>Описание</label><textarea id="fd" maxlength="2000">${esc(p.description)}</textarea>
-        <label>Картинка (https://…)</label><input id="fi" maxlength="512" value="${esc(p.image_url || "")}">
-        <label>Категория</label><select id="fc"><option value="">Без категории</option>${cats.map((c) => `<option value="${c.id}" ${c.id === p.category_id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
-        <div style="display:flex; gap:10px;">
-          <div style="flex:1;"><label>Цена, Stars</label><input id="fp" type="number" min="0" max="100000" value="${p.price_stars}"></div>
-          <div style="flex:1;"><label>Старая цена (для акции)</label><input id="fop" type="number" min="0" max="100000" value="${p.old_price_stars || ""}"></div>
-        </div>
-        <label class="check"><input type="checkbox" id="fa" ${p.is_available ? "checked" : ""}> В наличии</label>
-        <label class="check"><input type="checkbox" id="fh" ${p.is_hidden ? "checked" : ""}> Скрыть из магазина</label>
-        <label class="check"><input type="checkbox" id="fm" ${p.is_demo ? "checked" : ""}> Пометка «Демо»</label>
-        <div class="actions"><button class="btn" id="fs">Сохранить</button><button class="btn ghost" id="fx">Отмена</button>${p.id ? '<button class="btn danger" id="fdl">Удалить</button>' : ""}</div></div>`;
-      $("#pform").scrollIntoView({behavior:"smooth"});
-      $("#fx").onclick = () => { $("#pform").innerHTML = ""; };
-      $("#fs").onclick = () => run(async () => {
-        const body = {name:$("#fn").value.trim(), description:$("#fd").value, image_url:$("#fi").value.trim() || null,
-          category_id:$("#fc").value ? +$("#fc").value : null, price_stars:+$("#fp").value,
-          old_price_stars: $("#fop").value ? +$("#fop").value : null,
-          is_available:$("#fa").checked, is_hidden:$("#fh").checked, is_demo:$("#fm").checked};
-        await api(p.id ? "/products/" + p.id : "/products", {method: p.id ? "PUT" : "POST", body});
-        toast("Товар сохранён"); products();
-      });
-      if (p.id) $("#fdl").onclick = () => confirm("Удалить товар? Старые заказы сохранятся.") && run(async () => { await api("/products/" + p.id, {method:"DELETE"}); toast("Товар удалён"); products(); });
-    };
-    $("#pq").oninput = draw; $("#padd").onclick = () => form(); draw();
-  }
+function needTG() { view.replaceChildren(h("div", { class: "empty" }, "Доступно в Telegram Mini App.")); }
+function statusChip(o) { const cls = o.status === "delivered" ? "ok" : o.status === "rejected" || o.status === "refunded" ? "no" : "wait"; return h("span", { class: "status " + cls, text: o.status_ru }); }
 
-  async function customers() {
-    view.innerHTML = `<h2>Покупатели</h2><div class="bar"><input id="cq" placeholder="Имя, @username, Roblox ник или Telegram ID"></div><div id="clist" class="list"></div>`;
-    const load = () => run(async () => {
-      const rows = await api("/customers?" + new URLSearchParams({q: $("#cq").value}));
-      $("#clist").innerHTML = rows.map((u) => `<a class="card row" href="#customers/${u.id}">
-        <div><b>${esc(u.first_name || "Без имени")}</b> ${u.username ? "@" + esc(u.username) : ""}<div class="muted small">TG ${esc(u.telegram_id)} · Roblox: ${esc(u.roblox_username || "—")}</div></div>
-        <div style="text-align:right"><b>${u.spent_stars} ⭐</b><div class="muted small">${u.orders} заказ(ов)</div></div></a>`).join("") || `<p class="muted">Покупателей пока нет</p>`;
-    });
-    let t; $("#cq").oninput = () => { clearTimeout(t); t = setTimeout(load, 300); }; load();
-  }
+async function pageOrders() {
+  if (!TG) return needTG();
+  view.replaceChildren(h("h2", { class: "title", text: "Мои заказы" }), h("div", { class: "skel" }));
+  let list;
+  try { list = await api("/api/orders"); } catch (x) { return view.replaceChildren(h("div", { class: "empty", text: x.message })); }
+  if (!list.length) return view.replaceChildren(h("h2", { class: "title", text: "Мои заказы" }), h("div", { class: "empty" }, "Заказов нет"));
+  view.replaceChildren(h("h2", { class: "title", text: "Мои заказы" }), h("div", { class: "orders" },
+    list.map((o) => h("a", { class: "order-row", href: `/orders/${o.id}`, "data-link": true },
+      h("div", { class: "onum", text: o.number }),
+      h("div", { class: "omid" }, h("div", { class: "oname", text: o.items.map((i) => `${i.name} ×${i.quantity}`).join(", ") }), h("div", { class: "tag", text: fmtDate(o.created_at) })),
+      h("div", { class: "oend" }, h("b", { text: stars(o.total_stars) }), statusChip(o))))));
+}
 
-  async function customer(id) {
-    const u = await api("/customers/" + encodeURIComponent(id));
-    view.innerHTML = `<a class="back" href="#customers">← Все покупатели</a><h2>${esc(u.first_name || "Покупатель")} ${u.username ? "@" + esc(u.username) : ""}</h2>
-      <div class="card" style="margin-bottom:12px">Telegram ID: ${esc(u.telegram_id)}<br>Roblox: <b>${esc(u.roblox_username || "—")}</b></div>
-      <h3>Заказы</h3><div class="list">${u.orders.map((o) => `<a class="card row" href="#orders/${o.id}"><div><b>№${esc(o.number)}</b><div class="muted small">${dt(o.created_at)}</div></div><div style="text-align:right"><b>${o.total_stars} ⭐</b><div>${badge(o.status)}</div></div></a>`).join("") || '<p class="muted">Заказов нет</p>'}</div>`;
-  }
+async function pageOrder(id) {
+  if (!TG) return needTG();
+  view.replaceChildren(h("div", { class: "skel" }));
+  let o;
+  try { o = await api(`/api/orders/${id}`); } catch { return view.replaceChildren(h("div", { class: "empty", text: "Заказ не найден" })); }
+  view.replaceChildren(
+    h("div", { class: "crumbs" }, h("a", { href: "/orders", "data-link": true }, "Заказы"), " / ", o.number),
+    h("section", { class: "order-card" },
+      h("div", { class: "order-head" }, h("div", { class: "big-num", text: o.number }), statusChip(o)),
+      h("div", { class: "r" }, h("span", { text: "Roblox" }), h("span", { text: o.roblox_username })),
+      h("h3", { text: "Товары" }),
+      o.items.map((i) => h("div", { class: "r" }, h("span", { text: `${i.name} × ${i.quantity}` }), h("span", { text: stars(i.subtotal) }))),
+      h("div", { class: "t" }, h("span", { text: "Итого" }), h("span", { text: stars(o.total_stars) })),
+      o.server_link ? h("a", { class: "btn btn-primary btn-block", href: o.server_link, target: "_blank" }, "Зайти на сервер") : "",
+      o.payment_status === "pending" && o.status === "awaiting_payment" ? h("button", { class: "btn btn-primary btn-block", onclick: async () => {
+        try { const { invoice_link } = await api(`/api/orders/${o.id}/invoice`, { method: "POST" }); TG.openInvoice(invoice_link, (s) => { if (s === "paid") { toast("Оплачено!"); setTimeout(() => pageOrder(o.id), 1500); } }); } catch (x) { toast(x.message); }
+      } }, `Оплатить ${o.total_stars} ⭐`) : "")));
+}
 
-  async function promos() {
-    const list = await api("/promocodes");
-    view.innerHTML = `<h2>Промокоды</h2>
-      <div class="card" style="margin-bottom:12px">
-        <h3>Создать промокод</h3>
-        <label>Код (латиница)</label><input id="pc" placeholder="НАПРИМЕР: BLOG10" style="text-transform: uppercase;">
-        <label>Скидка в %</label><input id="pd" type="number" min="1" max="100" value="10">
-        <label>Макс. использований (оставь пустым для безлимита)</label><input id="pm" type="number" min="1">
-        <div class="actions"><button class="btn" id="psave">Создать</button></div>
-      </div>
-      <div class="list">
-        ${list.length ? list.map(p => `<div class="card row">
-          <div><b>${esc(p.code)}</b> <span class="badge">${p.discount_percent}%</span>
-          <div class="muted small">Использован: ${p.uses_count} раз ${p.max_uses ? 'из ' + p.max_uses : ''}</div></div>
-          <button class="btn danger sm" onclick="if(confirm('Удалить?')) run(async()=>{ await api('/promocodes/${p.id}', {method:'DELETE'}); toast('Удален'); promos(); })">Удалить</button>
-        </div>`).join("") : '<p class="muted">Промокодов пока нет</p>'}
-      </div>`;
-      
-    $("#psave").onclick = () => run(async () => {
-      await api("/promocodes", {method:"POST", body:{
-        code: $("#pc").value, 
-        discount_percent: +$("#pd").value,
-        max_uses: $("#pm").value ? +$("#pm").value : null
-      }});
-      toast("Промокод создан"); promos();
-    });
-  }
+async function pageProfile() {
+  if (!TG) return needTG();
+  let me;
+  try { me = await api("/api/me"); state.me = me; } catch (x) { return view.replaceChildren(h("div", { class: "empty", text: x.message })); }
+  const err = h("div", { class: "err" });
+  const nick = h("input", { type: "text", maxlength: 20, value: me.roblox_username || "", placeholder: "Player_123" });
+  view.replaceChildren(h("h2", { class: "title", text: "Профиль" }), h("section", { class: "order-card" },
+    h("div", { class: "r" }, h("span", { text: "Telegram ID" }), h("span", { text: String(me.telegram_id) })),
+    h("label", { class: "field" }, "Roblox username", nick, err),
+    h("button", { class: "btn btn-primary btn-block", onclick: async () => {
+      try { await api("/api/me/roblox", { method: "PUT", body: JSON.stringify({ roblox_username: nick.value.trim() }) }); toast("Сохранено"); }
+      catch (x) { err.textContent = x.message; }
+    } }, "Сохранить")));
+}
 
-  async function settings() {
-    const {settings: s, secrets} = await api("/settings");
-    const keys = Object.keys(s);
-    view.innerHTML = `<h2>Настройки</h2><div class="two"><div class="card">
-      ${keys.map((k) => `<label>${esc(SETTING_RU[k] || k)}</label>${(s[k].length > 60 || k.startsWith("text_") || k.startsWith("notify_")) ? `<textarea data-k="${esc(k)}" maxlength="4000">${esc(s[k])}</textarea>` : `<input data-k="${esc(k)}" maxlength="4000" value="${esc(s[k])}">`}`).join("")}
-      <div class="actions"><button class="btn" id="ss">Сохранить настройки</button></div></div>
-      <div class="list"><div class="card"><h3>Секреты сервера</h3><p class="muted small">Меняются только в Render → Environment.</p>
-        ${Object.entries(secrets).map(([k, v]) => `<div>${esc(k)}: ${v ? "✅ настроен" : "❌ не задан"}</div>`).join("")}</div>
-      <div class="card"><h3>Смена пароля</h3>
-        <input id="op" type="password" placeholder="Старый пароль" autocomplete="current-password">
-        <input id="np" type="password" placeholder="Новый пароль (от 8 символов)" autocomplete="new-password" style="margin-top:8px">
-        <div class="actions"><button class="btn" id="cp">Сменить пароль</button></div></div></div></div>`;
-    $("#ss").onclick = () => run(async () => {
-      const values = {}; view.querySelectorAll("[data-k]").forEach((el) => values[el.dataset.k] = el.value);
-      const r = await api("/settings", {method:"PUT", body:{values}});
-      toast(r.changed.length ? "Сохранено: " + r.changed.length : "Изменений нет");
-    });
-    $("#cp").onclick = () => run(async () => {
-      const r = await api("/password", {method:"POST", body:{old_password:$("#op").value, new_password:$("#np").value}});
-      csrf = r.csrf; $("#op").value = $("#np").value = ""; toast("Пароль изменён");
-    });
-  }
+function route() {
+  const path = location.pathname;
+  const m = path.match(/^\/product\/(\d+)$/);
+  if (m) return pageProduct(+m[1]);
+  if (path === "/cart") return pageCart();
+  if (path === "/about") return pageAbout();
+  const om = path.match(/^\/orders\/(\d+)$/);
+  if (om) return pageOrder(+om[1]);
+  if (path === "/orders") return pageOrders();
+  if (path === "/profile") return pageProfile();
+  return pageHome();
+}
+function go(url) { history.pushState(null, "", url); route(); }
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-link]");
+  if (!a || e.metaKey || e.ctrlKey) return;
+  e.preventDefault(); go(a.getAttribute("href"));
+});
+window.addEventListener("popstate", route);
 
-  async function audit() {
-    const rows = await api("/audit");
-    view.innerHTML = `<h2>Журнал действий</h2><div class="card"><table><tr><th>Когда</th><th>Кто</th><th>Действие</th><th>Подробности</th></tr>
-      ${rows.map((a) => `<tr><td class="small">${dt(a.at)}</td><td>${esc(a.actor)}</td><td>${esc(ACTIONS[a.action] || a.action)}${a.entity_id ? ` <span class="muted">#${esc(a.entity_id)}</span>` : ""}</td><td class="mono">${esc(a.details ? JSON.stringify(a.details) : "")}</td></tr>`).join("")}</table></div>`;
-  }
-
-  async function ready() {
-    const r = await api("/preflight");
-    const icon = (c) => c.ok ? "✅" : (c.critical ? "⛔" : "⚠️");
-    view.innerHTML = `<h2>Готовность к запуску</h2>
-      <div class="card"><h3>${r.ready ? "✅ Магазин готов к запуску" : "⛔ Не готов: " + esc(r.blockers.join(", "))}</h3>
-        ${r.warnings.length ? `<p class="muted">Предупреждения: ${esc(r.warnings.join(", "))}</p>` : ""}
-        <table>${r.checks.map((c) => `<tr><td>${icon(c)}</td><td><b>${esc(c.key)}</b><div class="muted small">${esc(c.message)}</div></td></tr>`).join("")}</table>
-        <p class="muted small">Секреты задаются в Render → Environment, после изменения перезапустите сервис.</p>
-        <button id="rchk">Проверить снова</button></div>`;
-    $("#rchk").onclick = () => run(ready);
-  }
-
-  async function backup() {
-    const ch = await api("/integrity");
-    view.innerHTML = `<h2>Резервные копии и проверка</h2><div class="list">
-      <div class="card"><h3>Проверка целостности</h3>
-        <p>${ch.ok ? "✅ Проблем не найдено" : "⚠️ Найдено проблем: " + ch.problems.length} · заказов проверено: ${ch.orders_checked}</p>
-        ${ch.payments_need_review ? `<p>Платежей на проверке: ${ch.payments_need_review}</p>` : ""}
-        ${ch.problems.length ? `<table>${ch.problems.map((p) => `<tr><td>${p.order ? "№" + esc(p.order) : "—"}</td><td>${esc(p.issue)}</td></tr>`).join("")}</table>` : ""}</div>
-      <div class="card"><h3>Скачать копию</h3><p class="muted small">Все товары, заказы, платежи, покупатели и настройки. Пароль владельца в копию не попадает.</p>
-        <div class="actions"><button class="btn" id="bk">Скачать резервную копию</button></div></div>
-      <div class="card"><h3>Восстановить из копии</h3><p class="muted small">Текущие данные будут заменены. Перед заменой сервер сам сохранит страховочную копию.</p>
-        <input type="file" id="bf" accept="application/json,.json">
-        <div class="actions"><button class="btn" id="br">Восстановить</button></div></div></div>`;
-    $("#bk").onclick = () => run(async () => {
-      const r = await fetch("/admin/api/backup", {credentials:"same-origin"});
-      if (!r.ok) throw new Error("Ошибка " + r.status);
-      const name = (r.headers.get("Content-Disposition") || "").match(/filename="(.+)"/)?.[1] || "chapashop_backup.json";
-      const url = URL.createObjectURL(await r.blob());
-      const a = document.createElement("a"); a.href = url; a.download = name; a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 5000); toast("Копия скачана");
-    });
-    $("#br").onclick = () => run(async () => {
-      const f = $("#bf").files[0]; if (!f) throw new Error("Выберите файл копии");
-      if (!confirm("Заменить все данные магазина данными из копии?")) return;
-      const r = await fetch("/admin/api/restore", {method:"POST", credentials:"same-origin",
-        headers:{"Content-Type":"application/json","X-CSRF-Token":csrf,"X-Confirm-Restore":"YES"}, body: await f.text()});
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.detail || "Ошибка " + r.status);
-      toast("Восстановлено"); backup();
-    });
-  }
-
-  api("/me").then((d) => { csrf = d.csrf; showApp(); }).catch(showLogin);
+(async () => {
+  if (TG) { TG.ready(); TG.expand(); TG.BackButton.onClick(() => history.length > 1 ? history.back() : go("/")); }
+  try { [state.cats, state.shop] = await Promise.all([api("/api/categories"), api("/api/shop")]); } catch {}
+  route();
+})();
 })();

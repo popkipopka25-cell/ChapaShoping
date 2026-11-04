@@ -19,6 +19,10 @@ WEB = Path(__file__).parent / "web"
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     with SessionLocal() as db:
+        # Гарантируем, что таблицы созданы (на случай SQLite без миграций)
+        from app.db import Base, engine
+        Base.metadata.create_all(engine)
+        
         seed(db)
         admin.ensure_owner(db)
     from bot.handlers import setup_bot

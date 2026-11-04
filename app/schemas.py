@@ -1,12 +1,10 @@
 from pydantic import BaseModel, ConfigDict
 
-
 class CategoryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     slug: str
     name: str
-
 
 class ProductOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -20,16 +18,13 @@ class ProductOut(BaseModel):
     is_available: bool
     is_demo: bool
 
-
 class CartLineIn(BaseModel):
     product_id: int
     quantity: int
 
-
 class CartQuoteIn(BaseModel):
     items: list[CartLineIn]
-    promo_code: str | None = None # Добавили промокод
-
+    promo_code: str | None = None
 
 class CartLineOut(BaseModel):
     product_id: int
@@ -40,11 +35,10 @@ class CartLineOut(BaseModel):
     subtotal: int
     available: bool
 
-
 class CartQuoteOut(BaseModel):
     items: list[CartLineOut]
     total_stars: int
-    discount_amount: int # Сколько скинули
+    discount_amount: int
     promo_applied: bool
     count: int
     removed: list[int]

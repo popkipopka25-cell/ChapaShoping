@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_env: str = "development"
-    database_url: str = "sqlite:///./chapashop.db"  # <--- вернули старое имя
+    database_url: str = "sqlite:///./chapashop.db"
     secret_key: str = "dev-insecure-key"
     bot_token: str = ""
     webhook_secret: str = ""

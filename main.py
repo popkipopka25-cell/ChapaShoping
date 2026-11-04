@@ -1,4 +1,5 @@
 """Точка входа ChapaShop: uvicorn main:app"""
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,11 +19,14 @@ WEB = Path(__file__).parent / "web"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # ПРИНУДИТЕЛЬНОЕ УДАЛЕНИЕ БАЗЫ ПРИ СТАРТЕ (чтобы убрать кракозябры)
+    db_file = Path("chapashop.db")
+    if db_file.exists():
+        db_file.unlink()
+        
     with SessionLocal() as db:
-        # Гарантируем, что таблицы созданы (на случай SQLite без миграций)
         from app.db import Base, engine
         Base.metadata.create_all(engine)
-        
         seed(db)
         admin.ensure_owner(db)
     from bot.handlers import setup_bot
@@ -44,22 +48,18 @@ app.mount("/static", StaticFiles(directory=WEB / "static"), name="static")
 
 
 log = logging.getLogger("chapashop")
-MAX_BODY = 1 * 1024 * 1024          # обычные запросы — до 1 МБ
-MAX_BODY_RESTORE = 50 * 1024 * 1024  # восстановление копии — до 50 МБ
-
+MAX_BODY = 1 * 1024 * 1024
+MAX_BODY_RESTORE = 50 * 1024 * 1024
 
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception):
-    # В лог — только тип ошибки и адрес, без тела запроса и секретов.
     log.error("Ошибка %s на %s %s", type(exc).__name__, request.method, request.url.path)
     return JSONResponse({"detail": "Внутренняя ошибка сервера. Попробуйте позже."}, status_code=500)
-
 
 @app.exception_handler(RequestValidationError)
 async def bad_input(request: Request, exc: RequestValidationError):
     errs = [{"loc": e.get("loc"), "msg": e.get("msg")} for e in exc.errors()]
     return JSONResponse({"detail": errs}, status_code=422)
-
 
 @app.middleware("http")
 async def security_headers(request, call_next):
@@ -87,18 +87,14 @@ async def security_headers(request, call_next):
         resp.headers["Cache-Control"] = "no-store"
     return resp
 
-
 @app.get("/admin", include_in_schema=False)
 def admin_page():
     return FileResponse(WEB / "admin.html")
-
 
 @app.get("/", include_in_schema=False)
 def index():
     return FileResponse(WEB / "index.html")
 
-
-# Страницы сайта (товар, корзина, о магазине) отдаются тем же интерфейсом.
 @app.get("/product/{product_id}", include_in_schema=False)
 @app.get("/cart", include_in_schema=False)
 @app.get("/about", include_in_schema=False)

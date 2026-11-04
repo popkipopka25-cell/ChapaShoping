@@ -12,22 +12,17 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_db
 from app.models import (ORDER_STATUS_RU, Admin, AuditLog, Category, Order, OrderItem,
-                        OrderStatus, OrderStatusHistory, Payment, Product, Setting, User)
+                        OrderStatus, OrderStatusHistory, Payment, Product, Setting, User, PromoCode)
 from app.security import (COOKIE, SESSION_TTL, check_session, csrf_for, hash_password,
                           make_session, parse_session, verify_password)
 
 router = APIRouter(prefix="/admin/api", tags=["admin"])
 
-# Ограничение попыток входа: 5 неудачных за 10 минут с одного адреса.
 _fails: dict[str, deque] = defaultdict(deque)
 FAIL_LIMIT, FAIL_WINDOW = 5, 600
 
-# Ключи, которые нельзя менять через панель (секреты живут только в переменных окружения).
-EDITABLE_SETTINGS_EXCLUDE = set()
-
 
 def ensure_owner(db: Session) -> None:
-    """Создаёт владельца из ADMIN_USERNAME/ADMIN_PASSWORD, если владельца ещё нет."""
     s = get_settings()
     if not s.admin_password or db.scalar(select(Admin).limit(1)) is not None:
         return
@@ -54,7 +49,6 @@ def current_admin(request: Request, db: Session = Depends(get_db)) -> Admin:
     return admin
 
 
-# ---------- Вход ----------
 class LoginIn(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=128)
@@ -118,7 +112,6 @@ def change_password(body: PasswordIn, request: Request, response: Response,
     return {"ok": True, "csrf": csrf}
 
 
-# ---------- Сводка ----------
 @router.get("/stats")
 def stats(_: Admin = Depends(current_admin), db: Session = Depends(get_db)):
     by_status = dict(db.execute(select(Order.status, func.count()).group_by(Order.status)).all())
@@ -132,7 +125,6 @@ def stats(_: Admin = Depends(current_admin), db: Session = Depends(get_db)):
     }
 
 
-# ---------- Заказы ----------
 def order_dict(o: Order, full: bool = False) -> dict:
     d = {"id": o.id, "number": o.number, "created_at": o.created_at.isoformat(),
          "telegram_id": o.telegram_id, "roblox_username": o.roblox_username,
@@ -186,9 +178,8 @@ def order_detail(oid: int, _: Admin = Depends(current_admin), db: Session = Depe
     return d
 
 
-# Разрешённые переходы статусов из панели. Оплату ставит только Telegram.
 TRANSITIONS = {
-    "awaiting_payment": {"rejected"},
+    "awaiting_payment": {"paid", "rejected"},
     "paid": {"processing", "awaiting_delivery", "delivered", "rejected"},
     "processing": {"awaiting_delivery", "delivered", "rejected"},
     "awaiting_delivery": {"processing", "delivered", "rejected"},
@@ -222,7 +213,7 @@ def set_status(oid: int, body: StatusIn, admin: Admin = Depends(current_admin), 
             sent = notify.rejected(db, o, body.comment)
         elif body.status == "delivered":
             sent = notify.delivered(db, o)
-            notify.receipt(db, o)  # чек отправляется вместе с уведомлением о выдаче
+            notify.receipt(db, o)
         else:
             sent = notify.status_changed(db, o)
     return {**order_dict(o), "notified": sent}
@@ -269,7 +260,6 @@ def refund_order(oid: int, admin: Admin = Depends(current_admin), db: Session = 
     return order_dict(o)
 
 
-# ---------- Выдача и чеки (Этап 7) ----------
 class DeliverIn(BaseModel):
     server_link: str = Field(min_length=1, max_length=512)
     comment: str | None = Field(None, max_length=500)
@@ -285,7 +275,6 @@ class DeliverIn(BaseModel):
 
 @router.post("/orders/{oid}/deliver")
 def start_delivery(oid: int, body: DeliverIn, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
-    """Одно действие: сохранить ссылку, перевести в «Ожидает выдачи» и отправить ссылку покупателю."""
     o = _get_order(db, oid)
     old = o.status.value
     if old not in ("paid", "processing", "awaiting_delivery"):
@@ -320,7 +309,7 @@ def receipt_pdf(oid: int, _: Admin = Depends(current_admin), db: Session = Depen
 @router.post("/orders/{oid}/send-receipt")
 def send_receipt(oid: int, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
     o = _get_order(db, oid)
-    _receipt_pdf(db, o)  # проверка, что чек возможен
+    _receipt_pdf(db, o)
     from bot import notify
     sent = notify.receipt(db, o)
     audit(db, admin.username, "order_receipt_sent", "order", o.id, {"sent": sent})
@@ -328,13 +317,13 @@ def send_receipt(oid: int, admin: Admin = Depends(current_admin), db: Session = 
     return {"ok": True, "notified": sent}
 
 
-# ---------- Товары ----------
 class ProductIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     description: str = Field("", max_length=2000)
     image_url: str | None = Field(None, max_length=512)
     category_id: int | None = None
-    price_stars: int = Field(ge=1, le=100000)
+    price_stars: int = Field(ge=0, le=100000)
+    old_price_stars: int | None = Field(None, ge=0, le=100000)
     is_available: bool = True
     is_hidden: bool = False
     is_demo: bool = False
@@ -352,8 +341,8 @@ class ProductIn(BaseModel):
 
 def product_dict(p: Product) -> dict:
     return {"id": p.id, "name": p.name, "description": p.description, "image_url": p.image_url,
-            "category_id": p.category_id, "price_stars": p.price_stars, "is_available": p.is_available,
-            "is_hidden": p.is_hidden, "is_demo": p.is_demo}
+            "category_id": p.category_id, "price_stars": p.price_stars, "old_price_stars": p.old_price_stars,
+            "is_available": p.is_available, "is_hidden": p.is_hidden, "is_demo": p.is_demo}
 
 
 @router.get("/products")
@@ -397,14 +386,12 @@ def delete_product(pid: int, admin: Admin = Depends(current_admin), db: Session 
     p = db.get(Product, pid)
     if p is None:
         raise HTTPException(404, "Товар не найден")
-    # Старые заказы хранят снимок названия и цены, поэтому удаление их не ломает.
     audit(db, admin.username, "product_delete", "product", p.id, {"name": p.name})
     db.delete(p)
     db.commit()
     return {"ok": True}
 
 
-# ---------- Покупатели ----------
 @router.get("/customers")
 def customers(_: Admin = Depends(current_admin), db: Session = Depends(get_db), q: str | None = None):
     paid = func.sum(Order.total_stars).filter(Order.payment_status == "paid")
@@ -431,7 +418,6 @@ def customer_detail(uid: int, _: Admin = Depends(current_admin), db: Session = D
             "orders": [order_dict(o) for o in db.scalars(select(Order).where(Order.user_id == u.id).order_by(Order.id.desc()))]}
 
 
-# ---------- Настройки ----------
 @router.get("/settings")
 def get_settings_all(_: Admin = Depends(current_admin), db: Session = Depends(get_db)):
     return {"settings": {s.key: s.value for s in db.scalars(select(Setting).order_by(Setting.key))},
@@ -461,7 +447,6 @@ def put_settings(body: SettingsIn, admin: Admin = Depends(current_admin), db: Se
     return {"ok": True, "changed": changed}
 
 
-# ---------- Журнал ----------
 @router.get("/audit")
 def audit_log(_: Admin = Depends(current_admin), db: Session = Depends(get_db), limit: int = 200):
     rows = db.scalars(select(AuditLog).order_by(AuditLog.id.desc()).limit(min(max(limit, 1), 500)))
@@ -469,9 +454,31 @@ def audit_log(_: Admin = Depends(current_admin), db: Session = Depends(get_db), 
              "details": a.details, "at": a.created_at.isoformat()} for a in rows]
 
 
-# ---------- Резервные копии и целостность (Этап 8) ----------
-import json as _json
+class PromoIn(BaseModel):
+    code: str = Field(min_length=2, max_length=32)
+    discount_percent: int = Field(ge=1, le=100)
+    max_uses: int | None = None
 
+@router.get("/promocodes")
+def get_promos(_: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+    return [{"id": p.id, "code": p.code, "discount_percent": p.discount_percent, "uses_count": p.uses_count, "max_uses": p.max_uses} for p in db.scalars(select(PromoCode)).all()]
+
+@router.post("/promocodes")
+def create_promo(body: PromoIn, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+    p = PromoCode(code=body.code.upper().strip(), discount_percent=body.discount_percent, max_uses=body.max_uses)
+    db.add(p)
+    audit(db, admin.username, "promo_create", "promo", None, {"code": p.code})
+    db.commit()
+    return {"ok": True}
+
+@router.delete("/promocodes/{pid}")
+def delete_promo(pid: int, admin: Admin = Depends(current_admin), db: Session = Depends(get_db)):
+    p = db.get(PromoCode, pid)
+    if p: db.delete(p); db.commit()
+    return {"ok": True}
+
+
+import json as _json
 from app import backup as _backup
 from app import integrity as _integrity
 
@@ -507,7 +514,6 @@ async def restore_backup(request: Request, admin: Admin = Depends(current_admin)
         raise HTTPException(400, "Файл не является JSON")
     try:
         _backup.validate(payload)
-        # Страховка: перед заменой сохраняем текущее состояние.
         safety = _backup.save_backup_file(_backup.make_backup(db))
         counts = _backup.restore(db, payload)
     except _backup.BackupError as e:
@@ -519,6 +525,5 @@ async def restore_backup(request: Request, admin: Admin = Depends(current_admin)
 
 @router.get("/preflight")
 def preflight(_: Admin = Depends(current_admin), db: Session = Depends(get_db)):
-    """Этап 9: проверка готовности к запуску (без значений секретов)."""
     from app.preflight import run_checks, summary
     return summary(run_checks(db))

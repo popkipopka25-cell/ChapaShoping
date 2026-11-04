@@ -1,4 +1,4 @@
-// Панель владельца ChapaShop
+// Панель владельца ChapaShop — красивый дизайн + реальные данные
 (() => {
   const $ = (s) => document.querySelector(s);
   let csrf = "";
@@ -7,13 +7,13 @@
   function showLogin() { $("#app").classList.add("hidden"); $("#login").classList.remove("hidden"); }
   function showApp() { $("#login").classList.add("hidden"); $("#app").classList.remove("hidden"); }
 
-  // Проверка, авторизован ли админ
+  // Проверка авторизации
   fetch("/admin/api/me", { credentials: "same-origin" })
     .then(r => { if (r.ok) return r.json(); throw new Error(); })
-    .then(data => { csrf = data.csrf; showApp(); })
+    .then(data => { csrf = data.csrf; showApp(); loadFirstOrder(); })
     .catch(() => showLogin());
 
-  // Отправка формы входа
+  // Вход
   $("#loginForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -26,45 +26,89 @@
       const data = await r.json();
       if (!r.ok) throw new Error(data.detail || "Ошибка входа");
       csrf = data.csrf;
-      showApp();
+      showApp(); loadFirstOrder();
     } catch (err) {
       $("#loginErr").textContent = err.message;
     }
   });
 
-  // --- НОВЫЙ ДИЗАЙН (Тестовые данные) ---
-  const order = {
-    number: "05244", status: "paid", createdAt: new Date().toISOString(),
-    buyer: { roblox: "SuperBuilder_2010", telegramId: "542198763" },
-    items: [
-      { name: "Divine Dragon", note: "Pet", price: 50, qty: 1 },
-      { name: "Mega Neon Unicorn", note: "Pet", price: 35, qty: 2 },
-    ],
-  };
-  const STATUSES = { paid: "Оплачен", processing: "В обработке", waiting: "Ожидает выдачи", rejected: "Отклонён", done: "Выдан" };
-
-  function render() {
-    $("#orderNumber").textContent = order.number;
-    $("#orderDate").textContent = new Date(order.createdAt).toLocaleString("ru-RU");
-    $("#robloxUser").textContent = order.buyer.roblox;
-    $("#telegramId").textContent = order.buyer.telegramId;
-
-    const badge = $("#orderStatus");
-    badge.className = `badge ${order.status}`;
-    badge.textContent = STATUSES[order.status] || order.status;
-
-    $("#itemsBody").innerHTML = order.items.map(i => `
-      <tr>
-        <td>${i.name}<span class="sub">${i.note}</span></td>
-        <td>${i.price} ⭐</td>
-        <td>${i.qty}</td>
-        <td><b>${i.price * i.qty} ⭐</b></td>
-      </tr>`).join("");
-    
-    const total = order.items.reduce((s, i) => s + i.price * i.qty, 0);
-    $("#orderTotal").textContent = `${total} ⭐`;
+  // Загрузка первого заказа из базы
+  async function loadFirstOrder() {
+    try {
+      const r = await fetch("/admin/api/orders?limit=1", { credentials: "same-origin" });
+      const orders = await r.json();
+      if (!orders.length) {
+        $("#orderNumber").textContent = "Нет заказов";
+        return;
+      }
+      renderOrder(orders[0].id);
+    } catch { $("#orderNumber").textContent = "Ошибка"; }
   }
-  render();
-  
-  $("#backBtn").onclick = () => location.href = "/admin";
+
+  // Отрисовка заказа
+  async function renderOrder(id) {
+    const r = await fetch(`/admin/api/orders/${id}`, { credentials: "same-origin" });
+    const o = await r.json();
+    
+    // Левая колонка
+    $("#orderNumber").textContent = o.number;
+    $("#orderDate").textContent = new Date(o.created_at).toLocaleString("ru-RU");
+    $("#robloxUser").textContent = o.roblox_username;
+    $("#telegramId").textContent = o.telegram_id;
+    
+    // Бейдж статуса
+    const badge = $("#orderStatus");
+    badge.className = `badge ${o.status}`;
+    const statusMap = { paid: "Оплачен", processing: "В обработке", awaiting_delivery: "Ожидает выдачи", delivered: "Выдан", rejected: "Отклонён" };
+    badge.textContent = statusMap[o.status] || o.status;
+
+    // Таблица товаров
+    $("#itemsBody").innerHTML = o.items.map(i => `
+      <tr>
+        <td>${i.name}</td>
+        <td>${i.price_stars} ⭐</td>
+        <td>${i.quantity}</td>
+        <td><b>${i.subtotal} ⭐</b></td>
+      </tr>`).join("");
+    $("#orderTotal").textContent = `${o.total_stars} ⭐`;
+
+    // Обработчики кнопок
+    $("#completeBtn").onclick = async () => {
+      if (!confirm("Выдать заказ?")) return;
+      await fetch(`/admin/api/orders/${id}/status`, {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        body: JSON.stringify({ status: "delivered", notify: true })
+      });
+      renderOrder(id);
+    };
+
+    $("#rejectBtn").onclick = async () => {
+      const reason = prompt("Причина отклонения:");
+      if (!reason) return;
+      await fetch(`/admin/api/orders/${id}/status`, {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        body: JSON.stringify({ status: "rejected", comment: reason, notify: true })
+      });
+      renderOrder(id);
+    };
+
+    $("#sendLinkBtn").onclick = async () => {
+      const link = $("#serverLink").value;
+      if (!link.startsWith("https://")) return alert("Нужна ссылка https://");
+      await fetch(`/admin/api/orders/${id}/deliver`, {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+        body: JSON.stringify({ server_link: link })
+      });
+      renderOrder(id);
+    };
+
+    $("#pdfBtn").onclick = () => {
+      window.open(`/admin/api/orders/${id}/receipt.pdf`, "_blank");
+    };
+    
+    $("#backBtn").onclick = () => location.reload();
+  }
 })();

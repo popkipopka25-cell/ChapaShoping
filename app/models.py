@@ -14,9 +14,9 @@ def now():
 
 
 class PaymentStatus(str, enum.Enum):
-    pending = "pending"        # Ожидает оплаты
-    paid = "paid"              # Оплачен
-    refunded = "refunded"      # Возврат оформлен
+    pending = "pending"        
+    paid = "paid"              
+    refunded = "refunded"      
     failed = "failed"
 
 
@@ -64,15 +64,26 @@ class Category(Base):
     products: Mapped[list["Product"]] = relationship(back_populates="category")
 
 
+class PromoCode(Base):
+    __tablename__ = "promo_codes"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    discount_percent: Mapped[int] = mapped_column(Integer, default=10) # 10% или 1%
+    uses_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_uses: Mapped[int | None] = mapped_column(Integer, nullable=True) # Если None, то безлимит
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class Product(Base):
     __tablename__ = "products"
-    __table_args__ = (CheckConstraint("price_stars >= 1", name="ck_price_positive"),)
+    __table_args__ = (CheckConstraint("price_stars >= 0", name="ck_price_positive"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(128))
     description: Mapped[str] = mapped_column(Text, default="")
     image_url: Mapped[str | None] = mapped_column(String(512))
     category_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id", ondelete="SET NULL"))
     price_stars: Mapped[int] = mapped_column(Integer)
+    old_price_stars: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
     is_hidden: Mapped[bool] = mapped_column(Boolean, default=False)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -93,12 +104,13 @@ class CartItem(Base):
 
 class Order(Base):
     __tablename__ = "orders"
-    # id — автоинкремент БД, поэтому номер заказа уникален даже при одновременном создании.
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     roblox_username: Mapped[str] = mapped_column(String(32), index=True)
     total_stars: Mapped[int] = mapped_column(Integer)
+    promo_code: Mapped[str | None] = mapped_column(String(32), nullable=True) # Примененный промокод
+    discount_percent: Mapped[int] = mapped_column(Integer, default=0) # Какая была скидка
     payment_status: Mapped[PaymentStatus] = mapped_column(Enum(PaymentStatus, native_enum=False), default=PaymentStatus.pending)
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus, native_enum=False), default=OrderStatus.awaiting_payment, index=True)
     server_link: Mapped[str | None] = mapped_column(String(512))
@@ -108,7 +120,10 @@ class Order(Base):
 
     @property
     def number(self) -> str:
-        return f"{self.id:05d}"
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+        char = alphabet[self.id % 24]
+        num = (self.id * 7391) % 10000
+        return f"{char}-{num:04d}"
 
 
 class OrderItem(Base):
@@ -116,7 +131,7 @@ class OrderItem(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"))
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id", ondelete="SET NULL"))
-    product_name: Mapped[str] = mapped_column(String(128))   # снимок на момент заказа
+    product_name: Mapped[str] = mapped_column(String(128))
     price_stars: Mapped[int] = mapped_column(Integer)
     quantity: Mapped[int] = mapped_column(Integer)
 
@@ -125,7 +140,6 @@ class Payment(Base):
     __tablename__ = "payments"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"))
-    # UNIQUE — защита от повторного зачисления одного платежа
     telegram_payment_charge_id: Mapped[str] = mapped_column(String(255), unique=True)
     amount_stars: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(8), default="XTR")

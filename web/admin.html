@@ -7,11 +7,10 @@
   <title>ChapaShop — панель владельца</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/admin.css?v=10">
+  <link rel="stylesheet" href="/static/admin.css?v=99">
 </head>
 <body>
   
-  <!-- ФОРМА ВХОДА (скрыта по умолчанию, показывается если не авторизован) -->
   <div id="login" class="login hidden">
     <form id="loginForm" class="card login-card">
       <div class="logo" style="font-size: 24px; font-weight: 800; margin-bottom: 8px;">Chapa<span style="color:var(--primary)">Shop</span></div>
@@ -23,10 +22,8 @@
     </form>
   </div>
 
-  <!-- САМА АДМИНКА (новый дизайн) -->
   <div id="app" class="hidden">
     <div class="page">
-      <!-- ЛЕВАЯ КОЛОНКА -->
       <aside class="card sidebar">
         <div>
           <div class="label">Заказ №</div>
@@ -39,11 +36,9 @@
             <div><dt>Telegram ID</dt><dd id="telegramId">—</dd></div>
           </dl>
         </div>
-
         <button class="btn btn-outline" id="backBtn">← Назад ко всем заказам</button>
       </aside>
 
-      <!-- ПРАВАЯ КОЛОНКА -->
       <main class="content">
         <section class="card">
           <h2 class="card-title">Информация о заказе</h2>
@@ -83,6 +78,6 @@
   </div>
 
   <div class="toast" id="toast"></div>
-  <script src="/static/admin.js?v=10"></script>
+  <script src="/static/admin.js?v=99"></script>
 </body>
 </html>

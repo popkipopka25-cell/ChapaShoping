@@ -4,8 +4,8 @@
   const view = $("#view");
   let csrf = "";
   const STATUS = {awaiting_payment:"Ожидает оплаты",paid:"Оплачен",processing:"В обработке",awaiting_delivery:"Ожидает выдачи",delivered:"Выдан",rejected:"Отклонён",refunded:"Возврат оформлен"};
-  const NEXT = {awaiting_payment:["rejected"],paid:["processing","awaiting_delivery","delivered","rejected"],processing:["awaiting_delivery","delivered","rejected"],awaiting_delivery:["processing","delivered","rejected"]};
-  const ACTIONS = {login:"Вход",login_failed:"Неудачный вход",logout:"Выход",password_changed:"Смена пароля",order_status:"Статус заказа",order_server_link:"Ссылка на сервер",order_refund:"Возврат",product_create:"Новый товар",product_update:"Изменение товара",product_delete:"Удаление товара",settings_update:"Настройки",order_deliver:"Начата выдача",order_receipt_sent:"Отправлен чек",backup_create:"Резервная копия",backup_restore:"Восстановление из копии"};
+  const NEXT = {awaiting_payment:["paid", "rejected"],paid:["processing","awaiting_delivery","delivered","rejected"],processing:["awaiting_delivery","delivered","rejected"],awaiting_delivery:["processing","delivered","rejected"]};
+  const ACTIONS = {login:"Вход",login_failed:"Неудачный вход",logout:"Выход",password_changed:"Смена пароля",order_status:"Статус заказа",order_server_link:"Ссылка на сервер",order_refund:"Возврат",product_create:"Новый товар",product_update:"Изменение товара",product_delete:"Удаление товара",settings_update:"Настройки",order_deliver:"Начата выдача",order_receipt_sent:"Отправлен чек",backup_create:"Резервная копия",backup_restore:"Восстановление из копии",promo_create:"Создан промокод"};
   const SETTING_RU = {shop_name:"Название магазина",shop_description:"Описание",primary_color:"Основной цвет",maintenance_mode:"Режим обслуживания (0/1)",contact_info:"Контакты",order_rules:"Правила заказа",bot_username:"Username бота (без @)"};
 
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -48,7 +48,7 @@
   function route() {
     const [tab, id] = (location.hash.slice(1) || "dash").split("/");
     document.querySelectorAll("#tabs a").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
-    const pages = {dash, orders: () => id ? order(id) : orders(), products, customers: () => id ? customer(id) : customers(), settings, audit, backup, ready};
+    const pages = {dash, orders: () => id ? order(id) : orders(), products, customers: () => id ? customer(id) : customers(), settings, audit, backup, ready, promos};
     run(pages[tab] || dash);
   }
 
@@ -144,17 +144,25 @@
       const q = $("#pq").value.toLowerCase();
       $("#plist").innerHTML = list.filter((p) => p.name.toLowerCase().includes(q)).map((p) => `<div class="card row" data-id="${p.id}">
         <div><b>${esc(p.name)}</b>${p.is_demo ? ' <span class="badge">Демо</span>' : ""}${p.is_hidden ? ' <span class="badge rejected">Скрыт</span>' : ""}${!p.is_available ? ' <span class="badge awaiting_payment">Нет в наличии</span>' : ""}
-          <div class="muted small">${esc(catName[p.category_id] || "Без категории")}</div></div><b>${p.price_stars} ⭐</b></div>`).join("") || `<p class="muted">Нет товаров</p>`;
+          <div class="muted small">${esc(catName[p.category_id] || "Без категории")}</div></div>
+        <div style="text-align:right">
+          ${p.old_price_stars ? `<div class="muted small" style="text-decoration:line-through;">${p.old_price_stars} ⭐</div>` : ''}
+          <b style="color: ${p.price_stars === 0 ? '#11a36a' : 'inherit'}">${p.price_stars === 0 ? 'Бесплатно' : p.price_stars + ' ⭐'}</b>
+        </div>
+      </div>`).join("") || `<p class="muted">Нет товаров</p>`;
       $("#plist").querySelectorAll("[data-id]").forEach((el) => el.onclick = () => form(list.find((p) => p.id == el.dataset.id)));
     };
     const form = (p) => {
-      p = p || {name:"", description:"", image_url:"", category_id:cats[0]?.id ?? null, price_stars:100, is_available:true, is_hidden:false, is_demo:false};
+      p = p || {name:"", description:"", image_url:"", category_id:cats[0]?.id ?? null, price_stars:100, old_price_stars:null, is_available:true, is_hidden:false, is_demo:false};
       $("#pform").innerHTML = `<div class="card" style="margin-bottom:12px"><h3>${p.id ? "Редактирование" : "Новый товар"}</h3>
         <label>Название</label><input id="fn" maxlength="128" value="${esc(p.name)}">
         <label>Описание</label><textarea id="fd" maxlength="2000">${esc(p.description)}</textarea>
         <label>Картинка (https://…)</label><input id="fi" maxlength="512" value="${esc(p.image_url || "")}">
         <label>Категория</label><select id="fc"><option value="">Без категории</option>${cats.map((c) => `<option value="${c.id}" ${c.id === p.category_id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
-        <label>Цена, Stars</label><input id="fp" type="number" min="1" max="100000" value="${p.price_stars}">
+        <div style="display:flex; gap:10px;">
+          <div style="flex:1;"><label>Цена, Stars</label><input id="fp" type="number" min="0" max="100000" value="${p.price_stars}"></div>
+          <div style="flex:1;"><label>Старая цена (для акции)</label><input id="fop" type="number" min="0" max="100000" value="${p.old_price_stars || ""}"></div>
+        </div>
         <label class="check"><input type="checkbox" id="fa" ${p.is_available ? "checked" : ""}> В наличии</label>
         <label class="check"><input type="checkbox" id="fh" ${p.is_hidden ? "checked" : ""}> Скрыть из магазина</label>
         <label class="check"><input type="checkbox" id="fm" ${p.is_demo ? "checked" : ""}> Пометка «Демо»</label>
@@ -164,6 +172,7 @@
       $("#fs").onclick = () => run(async () => {
         const body = {name:$("#fn").value.trim(), description:$("#fd").value, image_url:$("#fi").value.trim() || null,
           category_id:$("#fc").value ? +$("#fc").value : null, price_stars:+$("#fp").value,
+          old_price_stars: $("#fop").value ? +$("#fop").value : null,
           is_available:$("#fa").checked, is_hidden:$("#fh").checked, is_demo:$("#fm").checked};
         await api(p.id ? "/products/" + p.id : "/products", {method: p.id ? "PUT" : "POST", body});
         toast("Товар сохранён"); products();
@@ -189,6 +198,34 @@
     view.innerHTML = `<a class="back" href="#customers">← Все покупатели</a><h2>${esc(u.first_name || "Покупатель")} ${u.username ? "@" + esc(u.username) : ""}</h2>
       <div class="card" style="margin-bottom:12px">Telegram ID: ${esc(u.telegram_id)}<br>Roblox: <b>${esc(u.roblox_username || "—")}</b></div>
       <h3>Заказы</h3><div class="list">${u.orders.map((o) => `<a class="card row" href="#orders/${o.id}"><div><b>№${esc(o.number)}</b><div class="muted small">${dt(o.created_at)}</div></div><div style="text-align:right"><b>${o.total_stars} ⭐</b><div>${badge(o.status)}</div></div></a>`).join("") || '<p class="muted">Заказов нет</p>'}</div>`;
+  }
+
+  async function promos() {
+    const list = await api("/promocodes");
+    view.innerHTML = `<h2>Промокоды</h2>
+      <div class="card" style="margin-bottom:12px">
+        <h3>Создать промокод</h3>
+        <label>Код (латиница)</label><input id="pc" placeholder="НАПРИМЕР: BLOG10" style="text-transform: uppercase;">
+        <label>Скидка в %</label><input id="pd" type="number" min="1" max="100" value="10">
+        <label>Макс. использований (оставь пустым для безлимита)</label><input id="pm" type="number" min="1">
+        <div class="actions"><button class="btn" id="psave">Создать</button></div>
+      </div>
+      <div class="list">
+        ${list.length ? list.map(p => `<div class="card row">
+          <div><b>${esc(p.code)}</b> <span class="badge">${p.discount_percent}%</span>
+          <div class="muted small">Использован: ${p.uses_count} раз ${p.max_uses ? 'из ' + p.max_uses : ''}</div></div>
+          <button class="btn danger sm" onclick="if(confirm('Удалить?')) run(async()=>{ await api('/promocodes/${p.id}', {method:'DELETE'}); toast('Удален'); promos(); })">Удалить</button>
+        </div>`).join("") : '<p class="muted">Промокодов пока нет</p>'}
+      </div>`;
+      
+    $("#psave").onclick = () => run(async () => {
+      await api("/promocodes", {method:"POST", body:{
+        code: $("#pc").value, 
+        discount_percent: +$("#pd").value,
+        max_uses: $("#pm").value ? +$("#pm").value : null
+      }});
+      toast("Промокод создан"); promos();
+    });
   }
 
   async function settings() {

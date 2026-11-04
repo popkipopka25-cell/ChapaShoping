@@ -1,8 +1,7 @@
-// ChapaShop — интерфейс сайта. Весь текст выводится через textContent — защита от XSS.
-// Корзина хранится в браузере (localStorage), а цены и итог всегда пересчитывает сервер.
+// ChapaShop — интерфейс сайта.
 (() => {
 const CART_KEY = "chapashop_cart_v1";
-const state = { category: null, q: "", sort: "new", onlyAvail: false, cats: [], shop: {} };
+const state = { category: null, q: "", sort: "new", onlyAvail: false, cats: [], shop: {}, promo: "" };
 const $ = (s) => document.querySelector(s);
 const view = $("#view");
 
@@ -59,7 +58,7 @@ function card(p) {
   if (!p.is_available) img.append(h("span", { class: "pill off", text: "Нет в наличии" }));
   const btn = h("button", { class: "btn btn-primary", disabled: !p.is_available, onclick: (e) => {
     e.preventDefault(); e.stopPropagation(); cart.add(p.id); toast("Добавлено в корзину");
-  } }, p.is_available ? "В корзину" : "Нет в наличии");
+  } }, p.is_available ? (p.price_stars === 0 ? "Забрать" : "В корзину") : "Нет в наличии");
   return h("a", { class: "card", href: `/product/${p.id}`, "data-link": true }, img,
     h("div", { class: "body" },
       h("div", { class: "price" }, stars(p.price_stars)),
@@ -69,18 +68,17 @@ function card(p) {
 }
 
 async function pageHome() {
-  document.title = "ChapaShop — магазин Adopt Me за Telegram Stars";
+  document.title = "ChapaShop";
   const grid = h("section", { class: "grid", id: "grid" }, ...Array.from({ length: 6 }, () => h("div", { class: "skel" })));
   const count = h("div", { class: "count" });
-  const sort = h("select", { "aria-label": "Сортировка", onchange: (e) => { state.sort = e.target.value; loadProducts(); } },
+  const sort = h("select", { onchange: (e) => { state.sort = e.target.value; loadProducts(); } },
     ...[["new", "Сначала новые"], ["price_asc", "Дешевле"], ["price_desc", "Дороже"], ["name", "По названию"]]
       .map(([v, t]) => h("option", { value: v, selected: state.sort === v }, t)));
   const avail = h("input", { type: "checkbox", checked: state.onlyAvail, onchange: (e) => { state.onlyAvail = e.target.checked; loadProducts(); } });
-  const cats = h("nav", { class: "cats", "aria-label": "Категории" });
+  const cats = h("nav", { class: "cats" });
   const notice = state.shop.payments_enabled ? null : h("div", { class: "notice", text: "Тестовый режим: оплата пока не подключена, все товары — демо." });
   view.replaceChildren(
-    h("section", { class: "hero" }, h("h1", { text: state.shop.shop_name || "ChapaShop" }),
-      h("p", { text: state.shop.shop_description || "" })),
+    h("section", { class: "hero" }, h("h1", { text: state.shop.shop_name || "ChapaShop" }), h("p", { text: state.shop.shop_description || "" })),
     notice || "", cats,
     h("div", { class: "toolbar" }, count, h("div", { class: "ctrls" }, h("label", { class: "chk" }, avail, "В наличии"), sort)),
     grid);
@@ -97,48 +95,37 @@ async function pageHome() {
     try {
       const items = await api("/api/products?" + p);
       count.textContent = `Товаров: ${items.length}`;
-      if (!items.length) return grid.replaceChildren(h("div", { class: "empty" }, "Ничего не найдено",
-        h("br"), h("button", { class: "btn btn-ghost", onclick: () => { state.q = ""; $("#search").value = ""; state.category = null; state.onlyAvail = false; pageHome(); } }, "Сбросить фильтры")));
+      if (!items.length) return grid.replaceChildren(h("div", { class: "empty" }, "Ничего не найдено"));
       grid.replaceChildren(...items.map(card));
-    } catch { grid.replaceChildren(h("div", { class: "empty", text: "Не удалось загрузить каталог. Обновите страницу." })); }
+    } catch (e) { grid.replaceChildren(h("div", { class: "empty", text: "Ошибка загрузки" })); }
   }
   pageHome.reload = loadProducts;
   renderCats(); loadProducts();
 }
 
 async function pageProduct(id) {
-  view.replaceChildren(h("div", { class: "skel", style: "aspect-ratio:2;margin:16px 0" }));
+  view.replaceChildren(h("div", { class: "skel" }));
   let p;
-  try { p = await api(`/api/products/${id}`); } catch {
-    return view.replaceChildren(h("div", { class: "empty" }, "Товар не найден", h("br"), h("a", { class: "btn btn-ghost", href: "/", "data-link": true }, "В каталог")));
-  }
+  try { p = await api(`/api/products/${id}`); } catch { return view.replaceChildren(h("div", { class: "empty", text: "Товар не найден" })); }
   document.title = `${p.name} — ChapaShop`;
   let q = Math.max(1, cart.qty(p.id) || 1);
   const qn = h("span", { text: q });
-  const minus = h("button", { "aria-label": "Меньше", onclick: () => { q = Math.max(1, q - 1); qn.textContent = q; } }, "−");
-  const plus = h("button", { "aria-label": "Больше", onclick: () => { q = Math.min(99, q + 1); qn.textContent = q; } }, "+");
-  const img = productImage(p);
-  if (p.is_demo) img.append(h("span", { class: "pill", text: "Демо" }));
   view.replaceChildren(
     h("div", { class: "crumbs" }, h("a", { href: "/", "data-link": true }, "Каталог"), " / ", catName(p.category_id)),
-    h("section", { class: "pp" }, img,
-      h("div", {},
-        h("h1", { text: p.name }),
-        h("div", { class: "price" }, stars(p.price_stars)),
+    h("section", { class: "pp" }, productImage(p),
+      h("div", {}, h("h1", { text: p.name }), h("div", { class: "price" }, stars(p.price_stars)),
         h("span", { class: "status " + (p.is_available ? "ok" : "no"), text: p.is_available ? "В наличии" : "Нет в наличии" }),
-        h("p", { class: "desc", text: p.description || "Описание появится позже." }),
-        p.is_available ? h("div", { class: "buy-row" }, h("div", { class: "qty" }, minus, qn, plus),
-          h("button", { class: "btn btn-primary", onclick: () => { cart.set(p.id, q); toast(`В корзине: ${q} шт.`); } }, "В корзину")) : "",
-        h("p", { class: "tag", style: "margin-top:14px", text: `Категория: ${catName(p.category_id)}` }))));
+        h("p", { class: "desc", text: p.description }),
+        p.is_available ? h("div", { class: "buy-row" }, h("div", { class: "qty" }, h("button", { onclick: () => { q = Math.max(1, q - 1); qn.textContent = q; } }, "−"), qn, h("button", { onclick: () => { q = Math.min(99, q + 1); qn.textContent = q; } }, "+")),
+          h("button", { class: "btn btn-primary", onclick: () => { cart.set(p.id, q); toast(`В корзине: ${q} шт.`); } }, "В корзину")) : "")));
 }
 
 async function pageCart() {
-  document.title = "Корзина — ChapaShop";
+  document.title = "Корзина";
   const items = cart.read();
-  if (!items.length) return view.replaceChildren(h("h2", { class: "title", text: "Корзина" }),
-    h("div", { class: "empty" }, "Корзина пуста", h("br"), h("a", { class: "btn btn-primary", href: "/", "data-link": true }, "Перейти в каталог")));
+  if (!items.length) return view.replaceChildren(h("h2", { class: "title", text: "Корзина" }), h("div", { class: "empty" }, "Корзина пуста"));
   let quote;
-  try { quote = await api("/api/cart/quote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) }); }
+  try { quote = await api("/api/cart/quote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items, promo_code: state.promo }) }); } 
   catch { return view.replaceChildren(h("div", { class: "empty", text: "Не удалось пересчитать корзину" })); }
   if (quote.removed.length) { cart.write(items.filter((x) => !quote.removed.includes(x.product_id))); toast("Некоторые товары больше недоступны"); }
 
@@ -146,28 +133,32 @@ async function pageCart() {
     const step = (d) => { cart.set(l.product_id, l.quantity + d); pageCart(); };
     return h("div", { class: "line" + (l.available ? "" : " off") },
       h("div", { class: "img" }, "★"),
-      h("div", {},
-        h("a", { class: "nm", href: `/product/${l.product_id}`, "data-link": true, text: l.name }),
-        h("div", { class: "tag", text: l.available ? `${stars(l.price_stars)} за шт.` : "Нет в наличии — не войдёт в заказ" }),
-        h("div", { class: "row" },
-          h("div", { class: "qty" }, h("button", { disabled: l.quantity <= 1, onclick: () => step(-1), "aria-label": "Меньше" }, "−"), h("span", { text: l.quantity }), h("button", { onclick: () => step(1), "aria-label": "Больше" }, "+")),
-          h("b", { text: stars(l.subtotal) })),
+      h("div", {}, h("a", { class: "nm", href: `/product/${l.product_id}`, "data-link": true, text: l.name }),
+        h("div", { class: "tag", text: l.available ? `${stars(l.price_stars)} за шт.` : "Нет в наличии" }),
+        h("div", { class: "row" }, h("div", { class: "qty" }, h("button", { onclick: () => step(-1) }, "−"), h("span", { text: l.quantity }), h("button", { onclick: () => step(1) }, "+")), h("b", { text: stars(l.subtotal) })),
         h("button", { class: "rm", onclick: () => { cart.set(l.product_id, 0); pageCart(); } }, "Удалить")));
   });
 
   const err = h("div", { class: "err" });
   const saved = localStorage.getItem("chapashop_roblox") || "";
-  const nick = h("input", { type: "text", maxlength: 20, placeholder: "Например, Player_123", value: saved, autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
-  if (TG && !saved && state.me && state.me.roblox_username) nick.value = state.me.roblox_username;
-  const checkout = h("a", { class: "btn btn-primary btn-block", href: "#", onclick: async (e) => {
-    e.preventDefault();
+  const nick = h("input", { type: "text", maxlength: 20, placeholder: "Ваш Roblox ник", value: saved });
+  
+  // --- БЛОК ПРОМОКОДА ---
+  const promoInput = h("input", { type: "text", placeholder: "Введите промокод", value: state.promo, style: "text-transform: uppercase; margin-bottom: 8px;" });
+  const promoBtn = h("button", { class: "btn ghost btn-block", onclick: () => {
+    state.promo = promoInput.value.trim().toUpperCase();
+    pageCart();
+  }}, "Применить промокод");
+  // ----------------------
+
+  const checkout = h("button", { class: "btn btn-primary btn-block", onclick: async () => {
     const v = nick.value.trim();
     if (!/^[A-Za-z0-9_]{3,20}$/.test(v)) { err.textContent = "3–20 символов: латиница, цифры и _"; return; }
     err.textContent = ""; localStorage.setItem("chapashop_roblox", v);
     if (TG) {
       checkout.setAttribute("aria-disabled", "true");
       try {
-        const o = await api("/api/orders", { method: "POST", body: JSON.stringify({ roblox_username: v, items: quote.items.filter((l) => l.available).map((l) => ({ product_id: l.product_id, quantity: l.quantity })) }) });
+        const o = await api("/api/orders", { method: "POST", body: JSON.stringify({ roblox_username: v, promo_code: state.promo, items: quote.items.filter((l) => l.available).map((l) => ({ product_id: l.product_id, quantity: l.quantity })) }) });
         cart.write([]); toast(`Заказ ${o.number} создан`); go(`/orders/${o.id}`);
       } catch (x) { err.textContent = x.message; checkout.removeAttribute("aria-disabled"); }
       return;
@@ -176,119 +167,87 @@ async function pageCart() {
     if (!bot) { toast("Telegram-бот ещё не подключён"); return; }
     window.open(`https://t.me/${encodeURIComponent(bot)}?start=shop`, "_blank", "noopener");
   } }, TG ? "Оформить заказ" : "Оформить в Telegram");
+
   view.replaceChildren(h("h2", { class: "title", text: "Корзина" }),
     h("div", { class: "cart" }, h("div", { class: "lines" }, lines),
       h("aside", { class: "summary" },
         h("div", { class: "r" }, h("span", { text: "Товаров" }), h("span", { text: `${quote.count} шт.` })),
+        quote.discount_amount > 0 ? h("div", { class: "r", style: "color: #11a36a;" }, h("span", { text: "Скидка" }), h("span", { text: `-${quote.discount_amount} ⭐` })) : "",
         h("div", { class: "t" }, h("span", { text: "Итого" }), h("span", { text: stars(quote.total_stars) })),
-        h("label", { class: "field" }, "Ваш Roblox username", nick, err),
-        checkout,
-        h("div", { class: "hint", text: TG ? "После оформления откроется заказ с кнопкой оплаты в Telegram Stars." : "Оплата проходит в Telegram Stars внутри Telegram. Цены пересчитываются сервером." }),
-        h("button", { class: "rm", onclick: () => { cart.write([]); pageCart(); } }, "Очистить корзину"))));
+        
+        // --- ВСТАВЛЯЕМ ВВОД ПРОМОКОДА СЮДА ---
+        h("div", { class: "field", style: "margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px;" }, 
+          "Промокод", 
+          promoInput, 
+          promoBtn
+        ),
+        // --------------------------------------
+
+        h("label", { class: "field", style: "margin-top: 10px;" }, "Roblox username", nick, err),
+        checkout)));
 }
 
 function pageAbout() {
-  document.title = "О магазине — ChapaShop";
+  document.title = "О магазине";
   const s = state.shop;
   view.replaceChildren(h("section", { class: "about" },
     h("h2", { text: s.shop_name || "ChapaShop" }), h("p", { text: s.shop_description || "" }),
-    h("h3", { text: "Как проходит заказ" }), h("p", { text: "Выберите товары, укажите Roblox username и оплатите в Telegram Stars. После оплаты продавец пришлёт ссылку на приватный сервер и выдаст заказ." }),
-    h("h3", { text: "Правила" }), h("p", { text: s.order_rules || "" }),
-    h("h3", { text: "Контакты" }), h("p", { text: s.contact_info || "" }),
-    h("p", { class: "tag", text: "ChapaShop не связан с Roblox Corporation и Uplift Games." })));
+    h("h3", { text: "Как проходит заказ" }), h("p", { text: "Выберите товары, укажите Roblox username и оплатите в Telegram Stars." }),
+    h("h3", { text: "Контакты" }), h("p", { text: "Поддержка: @ChapikSupport" })));
 }
 
-function needTG() {
-  view.replaceChildren(h("div", { class: "empty" }, "Этот раздел доступен в Telegram Mini App.", h("br"),
-    state.shop.bot_username ? h("a", { class: "btn btn-primary", href: `https://t.me/${state.shop.bot_username}`, target: "_blank", rel: "noopener" }, "Открыть в Telegram") : ""));
-}
-function statusChip(o) {
-  const cls = o.status === "delivered" ? "ok" : o.status === "rejected" || o.status === "refunded" ? "no" : "wait";
-  return h("span", { class: "status " + cls, text: o.status_ru });
-}
+function needTG() { view.replaceChildren(h("div", { class: "empty" }, "Доступно в Telegram Mini App.")); }
+function statusChip(o) { const cls = o.status === "delivered" ? "ok" : o.status === "rejected" || o.status === "refunded" ? "no" : "wait"; return h("span", { class: "status " + cls, text: o.status_ru }); }
+
 async function pageOrders() {
-  document.title = "Мои заказы — ChapaShop";
   if (!TG) return needTG();
   view.replaceChildren(h("h2", { class: "title", text: "Мои заказы" }), h("div", { class: "skel" }));
   let list;
   try { list = await api("/api/orders"); } catch (x) { return view.replaceChildren(h("div", { class: "empty", text: x.message })); }
-  if (!list.length) return view.replaceChildren(h("h2", { class: "title", text: "Мои заказы" }),
-    h("div", { class: "empty" }, "Заказов пока нет", h("br"), h("a", { class: "btn btn-primary", href: "/", "data-link": true }, "В каталог")));
+  if (!list.length) return view.replaceChildren(h("h2", { class: "title", text: "Мои заказы" }), h("div", { class: "empty" }, "Заказов нет"));
   view.replaceChildren(h("h2", { class: "title", text: "Мои заказы" }), h("div", { class: "orders" },
     list.map((o) => h("a", { class: "order-row", href: `/orders/${o.id}`, "data-link": true },
       h("div", { class: "onum", text: o.number }),
-      h("div", { class: "omid" }, h("div", { class: "oname", text: o.items.map((i) => `${i.name} ×${i.quantity}`).join(", ") }),
-        h("div", { class: "tag", text: fmtDate(o.created_at) })),
+      h("div", { class: "omid" }, h("div", { class: "oname", text: o.items.map((i) => `${i.name} ×${i.quantity}`).join(", ") }), h("div", { class: "tag", text: fmtDate(o.created_at) })),
       h("div", { class: "oend" }, h("b", { text: stars(o.total_stars) }), statusChip(o))))));
 }
+
 async function pageOrder(id) {
   if (!TG) return needTG();
   view.replaceChildren(h("div", { class: "skel" }));
   let o;
   try { o = await api(`/api/orders/${id}`); } catch { return view.replaceChildren(h("div", { class: "empty", text: "Заказ не найден" })); }
-  document.title = `Заказ ${o.number} — ChapaShop`;
   view.replaceChildren(
-    h("div", { class: "crumbs" }, h("a", { href: "/orders", "data-link": true }, "Мои заказы"), " / ", o.number),
+    h("div", { class: "crumbs" }, h("a", { href: "/orders", "data-link": true }, "Заказы"), " / ", o.number),
     h("section", { class: "order-card" },
       h("div", { class: "order-head" }, h("div", { class: "big-num", text: o.number }), statusChip(o)),
-      h("div", { class: "r" }, h("span", { text: "Дата" }), h("span", { text: fmtDate(o.created_at) })),
       h("div", { class: "r" }, h("span", { text: "Roblox" }), h("span", { text: o.roblox_username })),
-      h("div", { class: "r" }, h("span", { text: "Оплата" }), h("span", { text: PAY_RU[o.payment_status] || o.payment_status })),
       h("h3", { text: "Товары" }),
       o.items.map((i) => h("div", { class: "r" }, h("span", { text: `${i.name} × ${i.quantity}` }), h("span", { text: stars(i.subtotal) }))),
       h("div", { class: "t" }, h("span", { text: "Итого" }), h("span", { text: stars(o.total_stars) })),
-      o.server_link ? h("a", { class: "btn btn-primary btn-block", href: o.server_link, target: "_blank", rel: "noopener" }, "Зайти на сервер") : "",
-      o.payment_status === "pending" && o.status === "awaiting_payment" ? payBlock(o) : "",
-      o.has_receipt ? h("button", { class: "btn btn-ghost btn-block", onclick: async (e) => {
-        e.currentTarget.setAttribute("aria-disabled", "true");
-        try { const r = await api(`/api/orders/${o.id}/receipt`, { method: "POST" }); toast(r.sent ? "Чек отправлен в чат с ботом" : "Не удалось отправить чек, попробуйте позже"); }
-        catch (x) { toast(x.message); }
-      } }, "Прислать чек в Telegram") : "",
-      h("h3", { text: "История статусов" }),
-      h("ol", { class: "timeline" }, o.history.map((x) => h("li", {}, h("b", { text: x.status_ru }), " · ", fmtDate(x.at), x.comment ? h("div", { class: "hint", text: "Причина: " + x.comment }) : "")))));
+      o.server_link ? h("a", { class: "btn btn-primary btn-block", href: o.server_link, target: "_blank" }, "Зайти на сервер") : "",
+      o.payment_status === "pending" && o.status === "awaiting_payment" ? h("button", { class: "btn btn-primary btn-block", onclick: async () => {
+        try { const { invoice_link } = await api(`/api/orders/${o.id}/invoice`, { method: "POST" }); TG.openInvoice(invoice_link, (s) => { if (s === "paid") { toast("Оплачено!"); setTimeout(() => pageOrder(o.id), 1500); } }); } catch (x) { toast(x.message); }
+      } }, `Оплатить ${o.total_stars} ⭐`) : "")));
 }
-function payBlock(o) {
-  const err = h("div", { class: "err" });
-  if (!state.shop.payments_enabled) return h("div", { class: "notice", text: "Тестовый режим: оплата Telegram Stars не подключена. Успешная оплата не имитируется." });
-  const btn = h("button", { class: "btn btn-primary btn-block", onclick: async () => {
-    btn.setAttribute("aria-disabled", "true"); err.textContent = "";
-    try {
-      const { invoice_link } = await api(`/api/orders/${o.id}/invoice`, { method: "POST" });
-      TG.openInvoice(invoice_link, (status) => {
-        btn.removeAttribute("aria-disabled");
-        if (status === "paid") { toast("Оплата получена, проверяем…"); setTimeout(() => pageOrder(o.id), 1500); }
-        else if (status === "failed") err.textContent = "Оплата не прошла. Попробуйте ещё раз.";
-        else if (status === "cancelled") err.textContent = "Оплата отменена.";
-      });
-    } catch (x) { err.textContent = x.message; btn.removeAttribute("aria-disabled"); }
-  } }, `Оплатить ${o.total_stars} ⭐`);
-  return h("div", {}, btn, err, h("div", { class: "hint", text: "Заказ станет «Оплачен» только после подтверждения платежа Telegram." }));
-}
+
 async function pageProfile() {
-  document.title = "Профиль — ChapaShop";
   if (!TG) return needTG();
   let me;
   try { me = await api("/api/me"); state.me = me; } catch (x) { return view.replaceChildren(h("div", { class: "empty", text: x.message })); }
   const err = h("div", { class: "err" });
-  const nick = h("input", { type: "text", maxlength: 20, value: me.roblox_username || "", placeholder: "Player_123", autocapitalize: "off", spellcheck: "false" });
+  const nick = h("input", { type: "text", maxlength: 20, value: me.roblox_username || "", placeholder: "Player_123" });
   view.replaceChildren(h("h2", { class: "title", text: "Профиль" }), h("section", { class: "order-card" },
-    h("div", { class: "r" }, h("span", { text: "Имя" }), h("span", { text: me.first_name || "—" })),
-    h("div", { class: "r" }, h("span", { text: "Telegram" }), h("span", { text: me.username ? "@" + me.username : "—" })),
     h("div", { class: "r" }, h("span", { text: "Telegram ID" }), h("span", { text: String(me.telegram_id) })),
-    h("div", { class: "r" }, h("span", { text: "Заказов" }), h("span", { text: String(me.orders_count) })),
     h("label", { class: "field" }, "Roblox username", nick, err),
     h("button", { class: "btn btn-primary btn-block", onclick: async () => {
-      try { await api("/api/me/roblox", { method: "PUT", body: JSON.stringify({ roblox_username: nick.value.trim() }) }); err.textContent = ""; toast("Сохранено"); }
+      try { await api("/api/me/roblox", { method: "PUT", body: JSON.stringify({ roblox_username: nick.value.trim() }) }); toast("Сохранено"); }
       catch (x) { err.textContent = x.message; }
-    } }, "Сохранить"),
-    h("a", { class: "btn btn-ghost btn-block", href: "/orders", "data-link": true }, "Мои заказы")));
+    } }, "Сохранить")));
 }
 
 function route() {
   const path = location.pathname;
-  const tab = path.startsWith("/cart") ? "cart" : path.startsWith("/about") ? "about" : path.startsWith("/orders") ? "orders" : path.startsWith("/profile") ? "profile" : "home";
-  document.querySelectorAll(".tabbar a").forEach((a) => a.classList.toggle("on", a.dataset.tab === tab));
-  window.scrollTo(0, 0);
   const m = path.match(/^\/product\/(\d+)$/);
   if (m) return pageProduct(+m[1]);
   if (path === "/cart") return pageCart();
@@ -297,7 +256,6 @@ function route() {
   if (om) return pageOrder(+om[1]);
   if (path === "/orders") return pageOrders();
   if (path === "/profile") return pageProfile();
-  if (TG && TG.BackButton) { path === "/" || path === "/app" ? TG.BackButton.hide() : TG.BackButton.show(); }
   return pageHome();
 }
 function go(url) { history.pushState(null, "", url); route(); }
@@ -307,30 +265,10 @@ document.addEventListener("click", (e) => {
   e.preventDefault(); go(a.getAttribute("href"));
 });
 window.addEventListener("popstate", route);
-window.addEventListener("storage", updateBadge);
-
-let st;
-$("#search").addEventListener("input", (e) => {
-  clearTimeout(st);
-  st = setTimeout(() => {
-    state.q = e.target.value.trim();
-    if (location.pathname !== "/") go("/"); else pageHome.reload && pageHome.reload();
-  }, 250);
-});
 
 (async () => {
-  updateBadge();
-  if (TG) {
-    TG.ready(); TG.expand();
-    document.body.classList.add("in-tg");
-    document.querySelectorAll(".tg-only").forEach((e) => (e.hidden = false));
-    document.querySelectorAll(".web-only").forEach((e) => (e.hidden = true));
-    TG.BackButton.onClick(() => history.length > 1 ? history.back() : go("/"));
-    api("/api/me").then((m) => (state.me = m)).catch(() => {});
-  }
+  if (TG) { TG.ready(); TG.expand(); TG.BackButton.onClick(() => history.length > 1 ? history.back() : go("/")); }
   try { [state.cats, state.shop] = await Promise.all([api("/api/categories"), api("/api/shop")]); } catch {}
-  const bot = state.shop.bot_username;
-  document.querySelectorAll(".tg-link").forEach((a) => { a.href = bot ? `https://t.me/${bot}` : "#"; });
   route();
 })();
 })();

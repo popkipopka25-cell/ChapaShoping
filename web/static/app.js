@@ -2,7 +2,7 @@
 // Корзина хранится в браузере (localStorage), а цены и итог всегда пересчитывает сервер.
 (() => {
 const CART_KEY = "chapashop_cart_v1";
-const state = { category: null, q: "", sort: "new", onlyAvail: false, cats: [], shop: {} };
+const state = { category: null, q: "", sort: "new", onlyAvail: false, cats: [], shop: {}, promo: "" };
 const $ = (s) => document.querySelector(s);
 const view = $("#view");
 
@@ -18,7 +18,6 @@ function h(tag, attrs = {}, ...kids) {
   for (const c of kids.flat()) if (c != null) e.append(c instanceof Node ? c : document.createTextNode(String(c)));
   return e;
 }
-// Telegram Mini App: initData отправляется на сервер, где проверяется подпись.
 const TG = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData ? window.Telegram.WebApp : null;
 async function api(path, opts = {}) {
   const headers = Object.assign({}, opts.headers || {});
@@ -60,12 +59,20 @@ function card(p) {
   const img = productImage(p);
   if (p.is_demo) img.append(h("span", { class: "pill", text: "Демо" }));
   if (!p.is_available) img.append(h("span", { class: "pill off", text: "Нет в наличии" }));
+  
+  const priceBlock = h("div", { class: "price" });
+  if (p.old_price_stars && p.old_price_stars > p.price_stars) {
+    priceBlock.append(h("span", { style: "text-decoration: line-through; color: #999; font-size: 14px; margin-right: 6px;" }, `${p.old_price_stars} ⭐`));
+  }
+  priceBlock.append(`${p.price_stars} ⭐`);
+
   const btn = h("button", { class: "btn btn-primary", disabled: !p.is_available, onclick: (e) => {
     e.preventDefault(); e.stopPropagation(); cart.add(p.id); toast("Добавлено в корзину");
-  } }, p.is_available ? "В корзину" : "Нет в наличии");
+  } }, p.is_available ? (p.price_stars === 0 ? "Забрать" : "В корзину") : "Нет в наличии");
+  
   return h("a", { class: "card", href: `/product/${p.id}`, "data-link": true }, img,
     h("div", { class: "body" },
-      h("div", { class: "price" }, stars(p.price_stars)),
+      priceBlock,
       h("div", { class: "name", text: p.name }),
       h("div", { class: "tag", text: catName(p.category_id) }),
       btn));
@@ -141,9 +148,14 @@ async function pageCart() {
   const items = cart.read();
   if (!items.length) return view.replaceChildren(h("h2", { class: "title", text: "Корзина" }),
     h("div", { class: "empty" }, "Корзина пуста", h("br"), h("a", { class: "btn btn-primary", href: "/", "data-link": true }, "Перейти в каталог")));
+  
   let quote;
-  try { quote = await api("/api/cart/quote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items }) }); }
-  catch { return view.replaceChildren(h("div", { class: "empty", text: "Не удалось пересчитать корзину" })); }
+  try { 
+    quote = await api("/api/cart/quote", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items, promo_code: state.promo }) }); 
+  } catch { 
+    return view.replaceChildren(h("div", { class: "empty", text: "Не удалось пересчитать корзину" })); 
+  }
+  
   if (quote.removed.length) { cart.write(items.filter((x) => !quote.removed.includes(x.product_id))); toast("Некоторые товары больше недоступны"); }
 
   const lines = quote.items.map((l) => {
@@ -163,6 +175,13 @@ async function pageCart() {
   const saved = localStorage.getItem("chapashop_roblox") || "";
   const nick = h("input", { type: "text", maxlength: 20, placeholder: "Например, Player_123", value: saved, autocomplete: "off", autocapitalize: "off", spellcheck: "false" });
   if (TG && !saved && state.me && state.me.roblox_username) nick.value = state.me.roblox_username;
+
+  const promoInput = h("input", { type: "text", placeholder: "Введите промокод", value: state.promo, style: "text-transform: uppercase;" });
+  const promoBtn = h("button", { class: "btn ghost", style: "margin-top: 8px; padding: 6px 12px;", onclick: () => {
+    state.promo = promoInput.value.trim().toUpperCase();
+    pageCart();
+  }}, "Применить");
+
   const checkout = h("a", { class: "btn btn-primary btn-block", href: "#", onclick: async (e) => {
     e.preventDefault();
     const v = nick.value.trim();
@@ -171,7 +190,7 @@ async function pageCart() {
     if (TG) {
       checkout.setAttribute("aria-disabled", "true");
       try {
-        const o = await api("/api/orders", { method: "POST", body: JSON.stringify({ roblox_username: v, items: quote.items.filter((l) => l.available).map((l) => ({ product_id: l.product_id, quantity: l.quantity })) }) });
+        const o = await api("/api/orders", { method: "POST", body: JSON.stringify({ roblox_username: v, promo_code: state.promo, items: quote.items.filter((l) => l.available).map((l) => ({ product_id: l.product_id, quantity: l.quantity })) }) });
         cart.write([]); toast(`Заказ ${o.number} создан`); go(`/orders/${o.id}`);
       } catch (x) { err.textContent = x.message; checkout.removeAttribute("aria-disabled"); }
       return;
@@ -180,11 +199,14 @@ async function pageCart() {
     if (!bot) { toast("Telegram-бот ещё не подключён"); return; }
     window.open(`https://t.me/${encodeURIComponent(bot)}?start=shop`, "_blank", "noopener");
   } }, TG ? "Оформить заказ" : "Оформить в Telegram");
+
   view.replaceChildren(h("h2", { class: "title", text: "Корзина" }),
     h("div", { class: "cart" }, h("div", { class: "lines" }, lines),
       h("aside", { class: "summary" },
         h("div", { class: "r" }, h("span", { text: "Товаров" }), h("span", { text: `${quote.count} шт.` })),
+        quote.discount_amount > 0 ? h("div", { class: "r", style: "color: #11a36a;" }, h("span", { text: "Скидка по промокоду" }), h("span", { text: `-${quote.discount_amount} ⭐` })) : "",
         h("div", { class: "t" }, h("span", { text: "Итого" }), h("span", { text: stars(quote.total_stars) })),
+        h("div", { class: "field", style: "margin-top: 10px; margin-bottom: 10px;" }, "Промокод", promoInput, promoBtn),
         h("label", { class: "field" }, "Ваш Roblox username", nick, err),
         checkout,
         h("div", { class: "hint", text: TG ? "После оформления откроется заказ с кнопкой оплаты в Telegram Stars." : "Оплата проходит в Telegram Stars внутри Telegram. Цены пересчитываются сервером." }),
@@ -198,7 +220,7 @@ function pageAbout() {
     h("h2", { text: s.shop_name || "ChapaShop" }), h("p", { text: s.shop_description || "" }),
     h("h3", { text: "Как проходит заказ" }), h("p", { text: "Выберите товары, укажите Roblox username и оплатите в Telegram Stars. После оплаты продавец пришлёт ссылку на приватный сервер и выдаст заказ." }),
     h("h3", { text: "Правила" }), h("p", { text: s.order_rules || "" }),
-    h("h3", { text: "Контакты" }), h("p", { text: s.contact_info || "" }),
+    h("h3", { text: "Контакты" }), h("p", { text: "Поддержка: @ChapikSupport" }),
     h("p", { class: "tag", text: "ChapaShop не связан с Roblox Corporation и Uplift Games." })));
 }
 

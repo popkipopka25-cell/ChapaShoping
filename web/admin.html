@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>ChapaShop — панель владельца</title>
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="loginForm" class="card login-card">
+      <div class="logo">Chapa<span>Shop</span></div>
+      <p class="muted">Панель владельца</p>
+      <input name="username" placeholder="Логин" autocomplete="username" required maxlength="64">
+      <input name="password" type="password" placeholder="Пароль" autocomplete="current-password" required maxlength="128">
+      <button class="btn">Войти</button>
+      <p id="loginErr" class="err"></p>
+    </form>
+  </div>
+
+  <div id="app" class="hidden">
+    <header class="top">
+      <div class="logo">Chapa<span>Shop</span> <small>админ</small></div>
+      <nav id="tabs">
+        <a data-tab="dash">Сводка</a>
+        <a data-tab="orders">Заказы</a>
+        <a data-tab="products">Товары</a>
+        <a data-tab="customers">Покупатели</a>
+        <a data-tab="settings">Настройки</a>
+        <a data-tab="audit">Журнал</a>
+        <a data-tab="backup">Копии</a>
+        <a data-tab="ready">Готовность</a>
+      </nav>
+      <button id="logout" class="btn ghost sm">Выйти</button>
+    </header>
+    <main id="view"></main>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="/static/admin.js"></script>
+</body>
+</html>

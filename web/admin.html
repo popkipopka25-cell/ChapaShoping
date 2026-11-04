@@ -7,10 +7,11 @@
   <title>ChapaShop — панель владельца</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/admin.css?v=99">
+  <link rel="stylesheet" href="/static/admin.css?v=100">
 </head>
 <body>
   
+  <!-- Форма входа -->
   <div id="login" class="login hidden">
     <form id="loginForm" class="card login-card">
       <div class="logo" style="font-size: 24px; font-weight: 800; margin-bottom: 8px;">Chapa<span style="color:var(--primary)">Shop</span></div>
@@ -22,8 +23,21 @@
     </form>
   </div>
 
+  <!-- Сама админка -->
   <div id="app" class="hidden">
-    <div class="page">
+    
+    <!-- ВЕРХНЕЕ МЕНЮ (возвращаем вкладки) -->
+    <header class="top-nav" style="display:flex; gap:10px; padding: 16px; background:#fff; box-shadow: var(--shadow); margin-bottom: 24px; overflow-x: auto;">
+      <a href="#" class="btn btn-gray" onclick="loadTab('dash'); return false;">Сводка</a>
+      <a href="#" class="btn btn-primary" onclick="loadTab('orders'); return false;">Заказы</a>
+      <a href="#" class="btn btn-gray" onclick="loadTab('products'); return false;">Товары</a>
+      <a href="#" class="btn btn-gray" onclick="loadTab('promos'); return false;">Промокоды</a>
+      <a href="#" class="btn btn-gray" onclick="loadTab('customers'); return false;">Покупатели</a>
+      <a href="#" class="btn btn-gray" style="margin-left: auto;" id="logout">Выйти</a>
+    </header>
+
+    <!-- БЛОК КРАСИВОГО ЗАКАЗА -->
+    <div id="view-order" class="page">
       <aside class="card sidebar">
         <div>
           <div class="label">Заказ №</div>
@@ -75,9 +89,13 @@
         </section>
       </main>
     </div>
+
+    <!-- Сюда будут загружаться другие вкладки (Товары, Промокоды и тд) -->
+    <div id="view-other" class="hidden" style="padding: 24px;"></div>
+
   </div>
 
   <div class="toast" id="toast"></div>
-  <script src="/static/admin.js?v=99"></script>
+  <script src="/static/admin.js?v=100"></script>
 </body>
 </html>

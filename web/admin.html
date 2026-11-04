@@ -5,39 +5,84 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
   <title>ChapaShop — панель владельца</title>
-  <link rel="stylesheet" href="/static/admin.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/admin.css?v=10">
 </head>
 <body>
+  
+  <!-- ФОРМА ВХОДА (скрыта по умолчанию, показывается если не авторизован) -->
   <div id="login" class="login hidden">
     <form id="loginForm" class="card login-card">
-      <div class="logo">Chapa<span>Shop</span></div>
-      <p class="muted">Панель владельца</p>
-      <input name="username" placeholder="Логин" autocomplete="username" required maxlength="64">
-      <input name="password" type="password" placeholder="Пароль" autocomplete="current-password" required maxlength="128">
-      <button class="btn">Войти</button>
-      <p id="loginErr" class="err"></p>
+      <div class="logo" style="font-size: 24px; font-weight: 800; margin-bottom: 8px;">Chapa<span style="color:var(--primary)">Shop</span></div>
+      <p class="label" style="margin-bottom: 16px;">Панель владельца</p>
+      <input name="username" placeholder="Логин" autocomplete="username" required maxlength="64" class="field" style="width:100%; padding:12px; border:1.5px solid var(--border); border-radius:12px; margin-bottom:8px;">
+      <input name="password" type="password" placeholder="Пароль" autocomplete="current-password" required maxlength="128" class="field" style="width:100%; padding:12px; border:1.5px solid var(--border); border-radius:12px; margin-bottom:16px;">
+      <button class="btn btn-primary" style="width: 100%;">Войти</button>
+      <p id="loginErr" class="err" style="color: var(--danger); margin-top: 8px; font-size:14px;"></p>
     </form>
   </div>
 
+  <!-- САМА АДМИНКА (новый дизайн) -->
   <div id="app" class="hidden">
-    <header class="top">
-      <div class="logo">Chapa<span>Shop</span> <small>админ</small></div>
-      <nav id="tabs">
-        <a data-tab="dash">Сводка</a>
-        <a data-tab="orders">Заказы</a>
-        <a data-tab="products">Товары</a>
-        <a data-tab="promos">Промокоды</a>
-        <a data-tab="customers">Покупатели</a>
-        <a data-tab="settings">Настройки</a>
-        <a data-tab="audit">Журнал</a>
-        <a data-tab="backup">Копии</a>
-        <a data-tab="ready">Готовность</a>
-      </nav>
-      <button id="logout" class="btn ghost sm">Выйти</button>
-    </header>
-    <main id="view"></main>
+    <div class="page">
+      <!-- ЛЕВАЯ КОЛОНКА -->
+      <aside class="card sidebar">
+        <div>
+          <div class="label">Заказ №</div>
+          <h1 class="order-number" id="orderNumber">—</h1>
+          <span class="badge" id="orderStatus">—</span>
+
+          <dl class="meta">
+            <div><dt>Создан</dt><dd id="orderDate">—</dd></div>
+            <div><dt>Roblox username</dt><dd id="robloxUser">—</dd></div>
+            <div><dt>Telegram ID</dt><dd id="telegramId">—</dd></div>
+          </dl>
+        </div>
+
+        <button class="btn btn-outline" id="backBtn">← Назад ко всем заказам</button>
+      </aside>
+
+      <!-- ПРАВАЯ КОЛОНКА -->
+      <main class="content">
+        <section class="card">
+          <h2 class="card-title">Информация о заказе</h2>
+          <div class="table-wrap">
+            <table class="items">
+              <thead>
+                <tr><th>Товар</th><th>Цена</th><th>Кол-во</th><th>Сумма</th></tr>
+              </thead>
+              <tbody id="itemsBody"></tbody>
+            </table>
+          </div>
+          <div class="total">Итого: <span id="orderTotal">0 ⭐</span></div>
+        </section>
+
+        <section class="card">
+          <h2 class="card-title">Действия с заказом</h2>
+          <div class="actions">
+            <button class="btn btn-primary" id="sendLinkBtn">Скинуть ссылку на сервер</button>
+            <button class="btn btn-success" id="completeBtn">Отдать заказ</button>
+            <button class="btn btn-danger" id="rejectBtn">Отклонить заказ</button>
+            <button class="btn btn-gray" id="pdfBtn">Сохранить PDF-чек</button>
+          </div>
+
+          <label class="field">
+            <span>Ссылка на приватный сервер</span>
+            <input type="url" id="serverLink" placeholder="https://www.roblox.com/games/..." />
+          </label>
+
+          <label class="checkbox">
+            <input type="checkbox" id="notifyTg" checked />
+            <span class="checkmark"></span>
+            Уведомить покупателя в Telegram
+          </label>
+        </section>
+      </main>
+    </div>
   </div>
-  <div id="toast" class="toast"></div>
-  <script src="/static/admin_v2.js"></script>
+
+  <div class="toast" id="toast"></div>
+  <script src="/static/admin.js?v=10"></script>
 </body>
 </html>

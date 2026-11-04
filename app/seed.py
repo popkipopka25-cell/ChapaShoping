@@ -27,27 +27,23 @@ SETTINGS = {
 
 def seed(db: Session) -> None:
     try:
-        # Находим первый товар. Если он есть и в нем есть кракозябры - очищаем всю таблицу.
-        first = db.scalar(select(Product).limit(1))
-        if first is not None and ("Ð" in first.name or "Â" in first.name):
-            db.query(OrderItem).delete()
-            db.query(Product).delete()
-            db.query(Category).delete()
-            db.commit()
-            first = None # Теперь таблица пустая
+        # Принудительно удаляем все старые товары и категории
+        db.query(OrderItem).delete()
+        db.query(Product).delete()
+        db.query(Category).delete()
+        db.commit()
         
-        # Если пусто - заново создаем
-        if first is None:
-            cats = {}
-            for slug, name, order in CATEGORIES:
-                c = Category(slug=slug, name=name, sort_order=order)
-                db.add(c)
-                db.flush()
-                cats[slug] = c
-            
-            for name, slug, price, desc in PRODUCTS:
-                db.add(Product(name=name, category_id=cats[slug].id, price_stars=price,
-                               description=desc, is_demo=True))
+        # Создаем новые
+        cats = {}
+        for slug, name, order in CATEGORIES:
+            c = Category(slug=slug, name=name, sort_order=order)
+            db.add(c)
+            db.flush()
+            cats[slug] = c
+        
+        for name, slug, price, desc in PRODUCTS:
+            db.add(Product(name=name, category_id=cats[slug].id, price_stars=price,
+                           description=desc, is_demo=True))
         
         for k, v in {**SETTINGS, **BOT_TEXTS}.items():
             if db.get(Setting, k) is None:

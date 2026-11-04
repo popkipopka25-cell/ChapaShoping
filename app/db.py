@@ -11,10 +11,7 @@ class Base(DeclarativeBase):
 def make_engine(url: str):
     kwargs = {"pool_pre_ping": True}
     if url.startswith("sqlite"):
-        # Добавляем кодировку UTF-8, чтобы русские буквы не превращались в кракозябры
         kwargs["connect_args"] = {"check_same_thread": False}
-        if "?" not in url:
-            url += "?charset=utf8"
     engine = create_engine(url, **kwargs)
     if url.startswith("sqlite"):
         @event.listens_for(engine, "connect")
@@ -33,3 +30,13 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def reset_database():
+    """Полностью удаляет все таблицы и создает их заново."""
+    try:
+        Base.metadata.drop_all(engine)
+        Base.metadata.create_all(engine)
+        print("База данных успешно очищена и создана заново.")
+    except Exception as e:
+        print(f"Ошибка при сбросе базы: {e}")

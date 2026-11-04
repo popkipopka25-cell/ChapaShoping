@@ -2,7 +2,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Category, Product, Setting, OrderItem
+from app.models import Category, Product, Setting
 from bot.texts import DEFAULTS as BOT_TEXTS
 
 CATEGORIES = [("pets", "Питомцы", 1), ("eggs", "Яйца", 2), ("potions", "Зелья", 3), ("other", "Другое", 4)]
@@ -27,37 +27,29 @@ SETTINGS = {
 
 def seed(db: Session) -> None:
     try:
-        first = db.scalar(select(Product).limit(1))
+        # Скрываем старые товары с кракозябрами, если они есть
+        bad_products = db.scalars(select(Product).where(Product.name.like("%Ð%"))).all()
+        for p in bad_products:
+            p.is_hidden = True
         
-        # Если база не пустая, проверяем на "кракозябры"
-        if first is not None:
-            # Буквы 'Ð', 'Â', 'Ã' — это верные признаки сломанной кодировки
-            if any(char in first.name for char in ["Ð", "Â", "Ã"]):
-                # Очищаем таблицы
-                db.query(OrderItem).delete()
-                db.query(Product).delete()
-                db.query(Category).delete()
-                db.commit()
-                first = None
-
-        # Если база пустая или мы её только что очистили — создаем всё заново
-        if first is None:
+        # Если товаров вообще нет (или мы скрыли старые), создаем новые
+        if db.scalar(select(Product).where(Product.is_hidden == False).limit(1)) is None:
             cats = {}
             for slug, name, order in CATEGORIES:
-                c = Category(slug=slug, name=name, sort_order=order)
-                db.add(c)
-                db.flush()
+                c = db.scalar(select(Category).where(Category.slug == slug))
+                if not c:
+                    c = Category(slug=slug, name=name, sort_order=order)
+                    db.add(c)
+                    db.flush()
                 cats[slug] = c
             
             for name, slug, price, desc in PRODUCTS:
                 db.add(Product(name=name, category_id=cats[slug].id, price_stars=price,
                                description=desc, is_demo=True))
         
-        # Заполняем настройки, если их нет
         for k, v in {**SETTINGS, **BOT_TEXTS}.items():
             if db.get(Setting, k) is None:
                 db.add(Setting(key=k, value=v))
-        
         db.commit()
     except Exception as e:
         print("Ошибка при заполнении базы:", e)

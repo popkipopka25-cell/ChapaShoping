@@ -11,7 +11,10 @@ class Base(DeclarativeBase):
 def make_engine(url: str):
     kwargs = {"pool_pre_ping": True}
     if url.startswith("sqlite"):
+        # Добавляем кодировку UTF-8, чтобы русские буквы не превращались в кракозябры
         kwargs["connect_args"] = {"check_same_thread": False}
+        if "?" not in url:
+            url += "?charset=utf8"
     engine = create_engine(url, **kwargs)
     if url.startswith("sqlite"):
         @event.listens_for(engine, "connect")

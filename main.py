@@ -1,5 +1,4 @@
 """Точка входа ChapaShop: uvicorn main:app"""
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import admin, catalog, health, miniapp, telegram
-from app.db import SessionLocal
+from app.db import SessionLocal, reset_database
 from app.seed import seed
 
 WEB = Path(__file__).parent / "web"
@@ -19,16 +18,14 @@ WEB = Path(__file__).parent / "web"
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # ПРИНУДИТЕЛЬНОЕ УДАЛЕНИЕ БАЗЫ ПРИ СТАРТЕ (чтобы убрать кракозябры)
-    db_file = Path("chapashop.db")
-    if db_file.exists():
-        db_file.unlink()
-        
+    # 1. Полностью очищаем базу при каждом запуске
+    reset_database()
+    
+    # 2. Заполняем её свежими демо-данными
     with SessionLocal() as db:
-        from app.db import Base, engine
-        Base.metadata.create_all(engine)
         seed(db)
         admin.ensure_owner(db)
+        
     from bot.handlers import setup_bot
     setup_bot()
     from app.preflight import run_checks, summary

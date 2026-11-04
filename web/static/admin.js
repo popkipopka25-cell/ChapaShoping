@@ -1,19 +1,17 @@
-// Панель владельца ChapaShop — красивый дизайн + реальные данные
+// Панель владельца ChapaShop — ТЕСТОВЫЙ ДИЗАЙН (проверка)
 (() => {
   const $ = (s) => document.querySelector(s);
   let csrf = "";
 
-  // Показываем форму входа или админку
+  // Форма входа/выхода
   function showLogin() { $("#app").classList.add("hidden"); $("#login").classList.remove("hidden"); }
   function showApp() { $("#login").classList.add("hidden"); $("#app").classList.remove("hidden"); }
 
-  // Проверка авторизации
   fetch("/admin/api/me", { credentials: "same-origin" })
     .then(r => { if (r.ok) return r.json(); throw new Error(); })
-    .then(data => { csrf = data.csrf; showApp(); loadFirstOrder(); })
+    .then(data => { csrf = data.csrf; showApp(); renderTestOrder(); })
     .catch(() => showLogin());
 
-  // Вход
   $("#loginForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -26,29 +24,26 @@
       const data = await r.json();
       if (!r.ok) throw new Error(data.detail || "Ошибка входа");
       csrf = data.csrf;
-      showApp(); loadFirstOrder();
+      showApp(); renderTestOrder();
     } catch (err) {
       $("#loginErr").textContent = err.message;
     }
   });
 
-  // Загрузка первого заказа из базы
-  async function loadFirstOrder() {
-    try {
-      const r = await fetch("/admin/api/orders?limit=1", { credentials: "same-origin" });
-      const orders = await r.json();
-      if (!orders.length) {
-        $("#orderNumber").textContent = "Нет заказов";
-        return;
-      }
-      renderOrder(orders[0].id);
-    } catch { $("#orderNumber").textContent = "Ошибка"; }
-  }
-
-  // Отрисовка заказа
-  async function renderOrder(id) {
-    const r = await fetch(`/admin/api/orders/${id}`, { credentials: "same-origin" });
-    const o = await r.json();
+  // --- ЗАГРУЖАЕМ ТЕСТОВЫЙ ЗАКАЗ ---
+  function renderTestOrder() {
+    const o = {
+      number: "05244",
+      status: "paid",
+      created_at: new Date().toISOString(),
+      roblox_username: "SuperBuilder_2010",
+      telegram_id: "542198763",
+      total_stars: 120,
+      items: [
+        { name: "Divine Dragon", price_stars: 50, quantity: 1, subtotal: 50 },
+        { name: "Mega Neon Unicorn", price_stars: 35, quantity: 2, subtotal: 70 }
+      ]
+    };
     
     // Левая колонка
     $("#orderNumber").textContent = o.number;
@@ -71,44 +66,7 @@
         <td><b>${i.subtotal} ⭐</b></td>
       </tr>`).join("");
     $("#orderTotal").textContent = `${o.total_stars} ⭐`;
-
-    // Обработчики кнопок
-    $("#completeBtn").onclick = async () => {
-      if (!confirm("Выдать заказ?")) return;
-      await fetch(`/admin/api/orders/${id}/status`, {
-        method: "POST", credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-        body: JSON.stringify({ status: "delivered", notify: true })
-      });
-      renderOrder(id);
-    };
-
-    $("#rejectBtn").onclick = async () => {
-      const reason = prompt("Причина отклонения:");
-      if (!reason) return;
-      await fetch(`/admin/api/orders/${id}/status`, {
-        method: "POST", credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-        body: JSON.stringify({ status: "rejected", comment: reason, notify: true })
-      });
-      renderOrder(id);
-    };
-
-    $("#sendLinkBtn").onclick = async () => {
-      const link = $("#serverLink").value;
-      if (!link.startsWith("https://")) return alert("Нужна ссылка https://");
-      await fetch(`/admin/api/orders/${id}/deliver`, {
-        method: "POST", credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-        body: JSON.stringify({ server_link: link })
-      });
-      renderOrder(id);
-    };
-
-    $("#pdfBtn").onclick = () => {
-      window.open(`/admin/api/orders/${id}/receipt.pdf`, "_blank");
-    };
-    
-    $("#backBtn").onclick = () => location.reload();
   }
+  
+  $("#backBtn").onclick = () => location.reload();
 })();

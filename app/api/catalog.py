@@ -53,7 +53,6 @@ MAX_LINES = 50
 
 @router.get("/shop")
 def shop_info(db: Session = Depends(get_db)):
-    """Публичные настройки магазина (без секретов)."""
     rows = db.scalars(select(Setting).where(Setting.key.in_(PUBLIC_SETTINGS))).all()
     data = {r.key: r.value for r in rows}
     data["payments_enabled"] = bool(get_settings().bot_token)
@@ -62,7 +61,6 @@ def shop_info(db: Session = Depends(get_db)):
 
 @router.post("/cart/quote", response_model=CartQuoteOut)
 def cart_quote(body: CartQuoteIn, db: Session = Depends(get_db)):
-    """Пересчёт корзины на сервере: цены берутся только из базы, не от клиента."""
     if len(body.items) > MAX_LINES:
         raise HTTPException(400, "Слишком много позиций")
     merged: dict[int, int] = {}

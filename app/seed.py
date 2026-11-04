@@ -1,7 +1,6 @@
 """Демо-данные. Только вымышленные товары с пометкой «Демо»."""
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
 from app.models import Category, Product, Setting
 from bot.texts import DEFAULTS as BOT_TEXTS
 
@@ -33,8 +32,7 @@ def seed(db: Session) -> None:
             cats[slug] = c
         db.flush()
         for name, slug, price, desc in PRODUCTS:
-            db.add(Product(name=name, category_id=cats[slug].id, price_stars=price,
-                           description=desc, is_demo=True))
+            db.add(Product(name=name, category_id=cats[slug].id, price_stars=price, description=desc, is_demo=True))
     for k, v in {**SETTINGS, **BOT_TEXTS}.items():
         if db.get(Setting, k) is None:
             db.add(Setting(key=k, value=v))

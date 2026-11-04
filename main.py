@@ -43,11 +43,13 @@ app.mount("/static", StaticFiles(directory=WEB / "static"), name="static")
 
 
 log = logging.getLogger("chapashop")
-MAX_BODY = 1 * 1024 * 1024          
-MAX_BODY_RESTORE = 50 * 1024 * 1024  
+MAX_BODY = 1 * 1024 * 1024          # обычные запросы — до 1 МБ
+MAX_BODY_RESTORE = 50 * 1024 * 1024  # восстановление копии — до 50 МБ
+
 
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception):
+    # В лог — только тип ошибки и адрес, без тела запроса и секретов.
     log.error("Ошибка %s на %s %s", type(exc).__name__, request.method, request.url.path)
     return JSONResponse({"detail": "Внутренняя ошибка сервера. Попробуйте позже."}, status_code=500)
 
@@ -85,16 +87,19 @@ async def security_headers(request, call_next):
     return resp
 
 
+# --- СТРАНИЦА АДМИНКИ (только для владельца) ---
 @app.get("/admin", include_in_schema=False)
 def admin_page():
     return FileResponse(WEB / "admin.html")
 
 
+# --- ГЛАВНАЯ СТРАНИЦА МАГАЗИНА ---
 @app.get("/", include_in_schema=False)
 def index():
     return FileResponse(WEB / "index.html")
 
 
+# --- ОСТАЛЬНЫЕ СТРАНИЦЫ МАГАЗИНА (Mini App) ---
 @app.get("/product/{product_id}", include_in_schema=False)
 @app.get("/cart", include_in_schema=False)
 @app.get("/about", include_in_schema=False)
@@ -103,4 +108,5 @@ def index():
 @app.get("/orders/{order_id}", include_in_schema=False)
 @app.get("/profile", include_in_schema=False)
 def spa_pages(product_id: int | None = None, order_id: int | None = None):
+    # Отдаем файл index.html (магазин)
     return FileResponse(WEB / "index.html")

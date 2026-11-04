@@ -2,7 +2,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Category, Product, Setting
+from app.models import Category, Product, Setting, OrderItem
 from bot.texts import DEFAULTS as BOT_TEXTS
 
 CATEGORIES = [("pets", "Питомцы", 1), ("eggs", "Яйца", 2), ("potions", "Зелья", 3), ("other", "Другое", 4)]
@@ -27,20 +27,22 @@ SETTINGS = {
 
 def seed(db: Session) -> None:
     try:
-        # Скрываем старые товары с кракозябрами, если они есть
-        bad_products = db.scalars(select(Product).where(Product.name.like("%Ð%"))).all()
-        for p in bad_products:
-            p.is_hidden = True
+        # Находим первый товар. Если он есть и в нем есть кракозябры - очищаем всю таблицу.
+        first = db.scalar(select(Product).limit(1))
+        if first is not None and ("Ð" in first.name or "Â" in first.name):
+            db.query(OrderItem).delete()
+            db.query(Product).delete()
+            db.query(Category).delete()
+            db.commit()
+            first = None # Теперь таблица пустая
         
-        # Если товаров вообще нет (или мы скрыли старые), создаем новые
-        if db.scalar(select(Product).where(Product.is_hidden == False).limit(1)) is None:
+        # Если пусто - заново создаем
+        if first is None:
             cats = {}
             for slug, name, order in CATEGORIES:
-                c = db.scalar(select(Category).where(Category.slug == slug))
-                if not c:
-                    c = Category(slug=slug, name=name, sort_order=order)
-                    db.add(c)
-                    db.flush()
+                c = Category(slug=slug, name=name, sort_order=order)
+                db.add(c)
+                db.flush()
                 cats[slug] = c
             
             for name, slug, price, desc in PRODUCTS:

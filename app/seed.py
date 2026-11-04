@@ -5,6 +5,17 @@ from sqlalchemy.orm import Session
 from app.models import Category, Product, Setting
 from bot.texts import DEFAULTS as BOT_TEXTS
 
+
+def fix_encoding(text):
+    """Переводит кракозябры (latin-1) обратно в русский (utf-8)."""
+    if not text:
+        return text
+    try:
+        return text.encode('latin-1').decode('utf-8')
+    except Exception:
+        return text
+
+
 CATEGORIES = [
     ("pets", "Питомцы", 1), 
     ("eggs", "Яйца", 2), 
@@ -34,25 +45,28 @@ SETTINGS = {
 
 def seed(db: Session) -> None:
     try:
-        # Полностью очищаем старые данные
-        db.query(Product).delete()
-        db.query(Category).delete()
+        # 1. Берем все товары из базы и исправляем их названия
+        products = db.scalars(select(Product)).all()
+        if products and ("Ð" in products[0].name):
+            for p in products:
+                p.name = fix_encoding(p.name)
+                p.description = fix_encoding(p.description)
         db.commit()
 
-        # Создаем категории
-        cats = {}
-        for slug, name, order in CATEGORIES:
-            c = Category(slug=slug, name=name, sort_order=order)
-            db.add(c)
-            db.flush()
-            cats[slug] = c
+        # 2. Если в базе пусто — создаем новые
+        if db.scalar(select(Product).limit(1)) is None:
+            cats = {}
+            for slug, name, order in CATEGORIES:
+                c = Category(slug=slug, name=name, sort_order=order)
+                db.add(c)
+                db.flush()
+                cats[slug] = c
+            
+            for name, slug, price, desc in PRODUCTS:
+                db.add(Product(name=name, category_id=cats[slug].id, price_stars=price,
+                               description=desc, is_demo=True))
         
-        # Создаем товары
-        for name, slug, price, desc in PRODUCTS:
-            db.add(Product(name=name, category_id=cats[slug].id, price_stars=price,
-                           description=desc, is_demo=True))
-        
-        # Заполняем настройки
+        # 3. Заполняем настройки
         for k, v in {**SETTINGS, **BOT_TEXTS}.items():
             if db.get(Setting, k) is None:
                 db.add(Setting(key=k, value=v))
